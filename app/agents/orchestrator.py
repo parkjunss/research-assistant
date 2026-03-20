@@ -4,9 +4,15 @@ from app.agents.search_agent import search_node
 from app.agents.summarizer_agent import summarize_node
 from app.agents.critic_agent import critic_node
 from app.agents.formatter_agent import format_node
+from app.core.logger import get_logger
+
+logger = get_logger("critic_agent")
 
 def should_retry(state: AgentState) -> str:
-    if state.get("should_retry") and state.get("retry_count", 0) < 2:
+    retry_count = state.get("retry_count", 0)
+    should = state.get("should_retry", False)
+    logger.info(f"재시도 판단 — should_retry: {should} / retry_count: {retry_count}")
+    if should and retry_count < 2:
         return "search"
     return "format"
 

@@ -49,7 +49,7 @@ async def critic_node(state: AgentState) -> AgentState:
             },
         }
     except Exception as e:
-        logger.error(f"검증 실패: {e}")
+        logger.warning(f"검증 실패 — retry_count: {state.get('retry_count', 0)} / 재검색: {improved_query}")
         return {
             **state,
             "should_retry": False,
