@@ -9,11 +9,19 @@ logger = get_logger("formatter_agent")
 async def format_node(state: AgentState) -> AgentState:
     llm = get_llm()
 
+    urls = [
+        result.get("link", "")
+        for result in state["search_results"]
+        if result.get("link")
+    ]
+    urls_str = "\n".join(f"- {url}" for url in urls)
+
     logger.info("최종 답변 포맷 시작")
     try:
         prompt = FORMAT_PROMPT.format(
             query=state["query"],
             summaries="\n".join(state["summaries"]),
+            urls=urls_str,
         )
         response = await llm.ainvoke([HumanMessage(content=prompt)])
         logger.info("최종 답변 포맷 완료")
