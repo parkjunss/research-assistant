@@ -191,6 +191,10 @@ app/
 │   ├── search_agent.py
 │   ├── summarizer_agent.py
 │   ├── critic_agent.py
+│   ├── custom_agent.py
+│   ├── plan_parser_agent.py
+│   ├── planner_agent.py
+│   ├── writer_agent.py
 │   └── formatter_agent.py
 ├── core/
 │   ├── config.py
