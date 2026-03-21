@@ -12,3 +12,4 @@ class AgentState(TypedDict):
     memory_context: Optional[str]
     rag_context: Optional[str]
     messages: Annotated[List[dict], operator.add]
+    plan_tasks: Optional[List[dict]]

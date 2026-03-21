@@ -2,9 +2,11 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from app.agents.orchestrator import research_graph, rebuild_graph
+from app.agents import orchestrator
 from app.agents.rag_agent import ingest_document
 from app.agents.plan_parser_agent import parse_and_ingest_plan
+from app.agents.planner_agent import run_planner
+from app.agents.writer_agent import run_writer
 from app.core.state import AgentState
 from app.db.postgres import (
     save_conversation,
@@ -91,7 +93,7 @@ async def query(request: QueryRequest):
             "messages": [{"role": "user", "content": request.query}],
         }
 
-        result = await research_graph.ainvoke(initial_state)
+        result = await orchestrator.research_graph.ainvoke(initial_state)
 
         await save_conversation(
             session_id=request.session_id,
@@ -215,6 +217,105 @@ async def upload_plan(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Planner ───────────────────────────────────────────────────
+
+class PlanRequest(BaseModel):
+    query: str = Field(..., description="작업 분해할 목표 또는 요청 내용")
+    session_id: str = Field("default", description="대화 세션 ID (메모리 컨텍스트 검색용)")
+    model_name: Optional[str] = Field(
+        None,
+        description="사용할 LLM. 예: 'ollama/qwen2.5:14b', 'gemini/gemini-2.0-flash'",
+    )
+
+
+@router.post("/plan")
+async def create_plan(request: PlanRequest):
+    """
+    사용자 요청을 작업 목록으로 분해하고 RAG에 저장한다.
+
+    - query와 RAG(기획서 등) 컨텍스트를 함께 활용
+    - 분해된 태스크는 task_type 메타데이터와 함께 RAG에 저장
+    - 이후 /query 호출 시 RAG 컨텍스트로 자동 활용됨
+    """
+    logger.info(f"플래너 실행: session={request.session_id} / query={request.query[:50]}")
+    try:
+        result = await run_planner(
+            query=request.query,
+            session_id=request.session_id,
+            model_name=request.model_name,
+        )
+        return {
+            "title":    result["title"],
+            "summary":  result["summary"],
+            "tasks":    result["tasks"],
+            "chunks":   result["chunks"],
+            "message":  (
+                f"작업 분해 완료 — {len(result['tasks'])}개 태스크 / "
+                f"{result['chunks']}개 청크로 RAG 저장됨"
+            ),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"플래너 실행 실패: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Writer ────────────────────────────────────────────────────
+
+class WriteRequest(BaseModel):
+    query: str = Field(..., description="작성할 문서 요청 내용")
+    task_ids: Optional[list[int]] = Field(
+        None, description="참고할 태스크 ID 목록 (미지정 시 RAG 전체 검색)"
+    )
+    output_fmt: str = Field(
+        "md", description="출력 형식: 'md' | 'docx' | 'pdf'"
+    )
+    filename: Optional[str] = Field(
+        None, description="저장 파일명 (확장자 제외, 미지정 시 제목에서 자동 생성)"
+    )
+    session_id: str = Field("default", description="대화 세션 ID")
+    model_name: Optional[str] = Field(
+        None, description="사용할 LLM. 예: 'ollama/qwen2.5:14b', 'gemini/gemini-2.0-flash'"
+    )
+
+
+@router.post("/write")
+async def write_document(request: WriteRequest):
+    """
+    RAG(기획서, 태스크)와 query를 바탕으로 문서를 작성하고 파일로 저장한다.
+
+    - task_ids 지정 시 해당 태스크 중심으로 컨텍스트 구성
+    - output_fmt: md(기본) / docx / pdf
+    - 저장 경로: 설정된 workspace_path (미설정 시 /tmp/research_workspace)
+    """
+    logger.info(
+        f"라이터 실행: session={request.session_id} / "
+        f"fmt={request.output_fmt} / query={request.query[:50]}"
+    )
+    try:
+        result = await run_writer(
+            query=request.query,
+            task_ids=request.task_ids,
+            output_fmt=request.output_fmt,
+            filename=request.filename,
+            session_id=request.session_id,
+            model_name=request.model_name,
+        )
+        return {
+            "filename": result["filename"],
+            "filepath": result["filepath"],
+            "format":   result["format"],
+            "content":  result["content"],
+            "message":  f"문서 작성 완료 — {result['filename']} 저장됨",
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"라이터 실행 실패: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── 에이전트 CRUD ─────────────────────────────────────────────
 
 @router.get("/agents")
@@ -252,7 +353,7 @@ async def add_agent(request: AgentCreateRequest):
             enabled=request.enabled,
             model_name=request.model_name,
         )
-        await rebuild_graph()
+        await orchestrator.rebuild_graph()
         logger.info(f"에이전트 추가 완료: {request.name} (position={request.position})")
         return {"agent": agent, "message": f"에이전트 '{request.name}' 추가 완료. 그래프 재빌드됨."}
 
@@ -278,7 +379,7 @@ async def modify_agent(name: str, request: AgentUpdateRequest):
 
     try:
         agent = await update_agent(name, **updates)
-        await rebuild_graph()
+        await orchestrator.rebuild_graph()
         logger.info(f"에이전트 수정 완료: {name}")
         return {"agent": agent, "message": f"에이전트 '{name}' 수정 완료. 그래프 재빌드됨."}
 
@@ -299,7 +400,7 @@ async def remove_agent(name: str):
     """
     try:
         await delete_agent(name)
-        await rebuild_graph()
+        await orchestrator.rebuild_graph()
         logger.info(f"에이전트 삭제 완료: {name}")
         return {"message": f"에이전트 '{name}' 삭제 완료. 그래프 재빌드됨."}
 

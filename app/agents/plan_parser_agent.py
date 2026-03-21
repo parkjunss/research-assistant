@@ -128,6 +128,12 @@ async def _parse_sections(text: str, model_name: str | None) -> dict:
         raw = re.sub(r"\s*```$", "", raw)
 
         parsed = json.loads(raw)
+
+        # title이 비어있으면 텍스트 첫 줄로 폴백
+        if not parsed.get("title"):
+            first_line = text.strip().splitlines()[0].strip()
+            parsed["title"] = first_line
+
         return parsed
 
     except json.JSONDecodeError as e:

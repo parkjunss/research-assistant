@@ -1,6 +1,8 @@
 services:
   api:
     build: .
+    volumes:
+      - ./research_workspace:/tmp/research_workspace
     ports:
       - "8000:8000"
     env_file:
