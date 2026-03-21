@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from app.db.postgres import init_db
 from app.db.redis_client import get_redis, close_redis
 from app.api.routes import router
+from app.api.settings import router as settings_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +30,7 @@ app.add_middleware(
 )
 
 app.include_router(router, prefix="/api/v1")
+app.include_router(settings_router, prefix="/api/v1/settings")
 
 @app.get("/health")
 async def health():

@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import Column, String, Text, DateTime, Integer, select
-from datetime import datetime, timezone
+from datetime import datetime
 from app.core.config import settings
 
 DATABASE_URL = (
@@ -22,7 +22,15 @@ class ConversationHistory(Base):
     session_id = Column(String(64), index=True, nullable=False)
     query = Column(Text, nullable=False)
     answer = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(64), unique=True, nullable=False)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 async def init_db():
     async with engine.begin() as conn:
@@ -57,3 +65,24 @@ async def get_history(session_id: str, limit: int = 10) -> list:
             }
             for row in rows
         ]
+
+async def get_setting(key: str, default: str = "") -> str:
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(AppSettings).where(AppSettings.key == key)
+        )
+        row = result.scalar_one_or_none()
+        return row.value if row else default
+
+async def upsert_setting(key: str, value: str):
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(AppSettings).where(AppSettings.key == key)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.value = value
+            row.updated_at = datetime.utcnow()
+        else:
+            session.add(AppSettings(key=key, value=value))
+        await session.commit()
