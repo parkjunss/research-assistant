@@ -4,6 +4,7 @@ from typing import Optional
 
 from app.agents.orchestrator import research_graph, rebuild_graph
 from app.agents.rag_agent import ingest_document
+from app.agents.plan_parser_agent import parse_and_ingest_plan
 from app.core.state import AgentState
 from app.db.postgres import (
     save_conversation,
@@ -160,6 +161,57 @@ async def list_documents():
         filenames = list(set([doc.metadata.get("filename", "unknown") for doc in results]))
         return {"documents": filenames}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/plan")
+async def upload_plan(
+    file: UploadFile = File(...),
+    model_name: Optional[str] = None,
+):
+    """
+    기획서를 업로드하면 LLM이 섹션 구조를 분석하고 RAG에 저장한다.
+
+    지원 형식: PDF, DOCX, MD, TXT
+    일반 /documents와 달리 섹션 유형(objective, requirements, schedule 등)을
+    메타데이터로 태깅하여 저장한다.
+
+    model_name: 파싱에 사용할 LLM (미지정 시 기본 LLM)
+        예) "ollama/qwen2.5:14b", "gemini/gemini-2.0-flash"
+    """
+    logger.info(f"기획서 업로드: {file.filename}")
+
+    allowed = (".pdf", ".docx", ".md", ".txt")
+    if not any(file.filename.lower().endswith(ext) for ext in allowed):
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원 형식: {', '.join(allowed)}",
+        )
+
+    try:
+        file_bytes = await file.read()
+        result = await parse_and_ingest_plan(
+            filename=file.filename,
+            file_bytes=file_bytes,
+            content_type=file.content_type or "",
+            model_name=model_name,
+        )
+        return {
+            "filename":   file.filename,
+            "plan_title": result["title"] or file.filename,
+            "sections":   result["sections"],
+            "chunks":     result["chunks"],
+            "message": (
+                f"기획서 파싱 완료 — "
+                f"{result['sections']}개 섹션 / {result['chunks']}개 청크로 저장됨"
+            ),
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"기획서 업로드 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

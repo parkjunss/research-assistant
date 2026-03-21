@@ -61,3 +61,34 @@ FORMAT_PROMPT = """
 ## 참고 출처
 {urls}
 """
+
+PLAN_PARSE_PROMPT = """
+당신은 기획서 분석 전문가입니다.
+아래 기획서 텍스트를 읽고 섹션별로 분류하세요.
+
+기획서 내용:
+{content}
+
+아래 JSON 형식으로만 반환하세요. 추가 설명 없이 JSON만 반환하세요:
+{{
+  "title": "기획서 제목 (파악 불가 시 빈 문자열)",
+  "sections": [
+    {{
+      "type": "섹션 유형",
+      "heading": "섹션 제목",
+      "content": "섹션 내용"
+    }}
+  ]
+}}
+
+섹션 유형은 아래 중 하나로 분류하세요:
+- objective      : 목적 / 배경 / 개요
+- requirements   : 기능 요구사항 / 비기능 요구사항
+- schedule       : 일정 / 마일스톤 / 로드맵
+- stakeholder    : 이해관계자 / 팀 구성 / 역할
+- budget         : 예산 / 비용
+- risk           : 리스크 / 이슈
+- design         : UI/UX / 화면 설계 / 와이어프레임
+- technical      : 기술 스택 / 아키텍처 / 인프라
+- other          : 위 유형에 해당하지 않는 내용
+"""
