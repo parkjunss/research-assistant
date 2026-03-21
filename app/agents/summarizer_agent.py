@@ -12,6 +12,7 @@ async def summarize_node(state: AgentState) -> AgentState:
     search_results = state["search_results"]
     query = state["query"]
     memory_context = state.get("memory_context", "")
+    rag_context = state.get("rag_context", "")
 
     if not search_results:
         logger.warning("검색 결과 없음 — 요약 스킵")
@@ -25,6 +26,7 @@ async def summarize_node(state: AgentState) -> AgentState:
                 search_results=chunk,
                 query=query,
                 memory_context=memory_context or "없음",
+                rag_context=rag_context or "없음",
             )
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             return response.content

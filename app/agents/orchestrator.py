@@ -5,6 +5,7 @@ from app.agents.summarizer_agent import summarize_node
 from app.agents.critic_agent import critic_node
 from app.agents.formatter_agent import format_node
 from app.agents.memory_agent import memory_retrieve_node, memory_save_node
+from app.agents.rag_agent import rag_retrieve_node
 from app.core.logger import get_logger
 
 logger = get_logger("orchestrator")
@@ -21,6 +22,7 @@ def build_graph():
     graph = StateGraph(AgentState)
 
     graph.add_node("memory_retrieve", memory_retrieve_node)
+    graph.add_node("rag_retrieve",    rag_retrieve_node)
     graph.add_node("search",          search_node)
     graph.add_node("summarize",       summarize_node)
     graph.add_node("critic",          critic_node)
@@ -28,7 +30,8 @@ def build_graph():
     graph.add_node("memory_save",     memory_save_node)
 
     graph.set_entry_point("memory_retrieve")
-    graph.add_edge("memory_retrieve", "search")
+    graph.add_edge("memory_retrieve", "rag_retrieve")
+    graph.add_edge("rag_retrieve",    "search")
     graph.add_edge("search",          "summarize")
     graph.add_edge("summarize",       "critic")
     graph.add_conditional_edges("critic", should_retry, {

@@ -10,4 +10,5 @@ class AgentState(TypedDict):
     retry_count: int
     final_answer: Optional[str]
     memory_context: Optional[str]
+    rag_context: Optional[str]
     messages: Annotated[List[dict], operator.add]
