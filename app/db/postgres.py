@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean, select
 from datetime import datetime
 from app.core.config import settings
+from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean, select, text
 
 DATABASE_URL = (
     f"postgresql+asyncpg://{settings.db_user}:{settings.db_password}"
@@ -78,8 +78,10 @@ _BUILTIN_AGENTS = [
 
 # ── 기존 함수 ────────────────────────────────────────────────
 
+
 async def init_db():
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     await _seed_builtin_agents()
 

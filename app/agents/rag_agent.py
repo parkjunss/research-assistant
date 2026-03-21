@@ -11,20 +11,55 @@ text_splitter = RecursiveCharacterTextSplitter(
     chunk_overlap=50,
 )
 
+# 쿼리 키워드 → section_type 매핑
+SECTION_TYPE_HINTS = {
+    "기술 스택": "technical",
+    "아키텍처": "technical",
+    "에이전트 파이프라인": "technical",
+    "인프라": "technical",
+    "기능": "requirements",
+    "요구사항": "requirements",
+    "일정": "schedule",
+    "마일스톤": "schedule",
+    "리스크": "risk",
+    "이해관계자": "stakeholder",
+    "목적": "objective",
+    "배경": "objective",
+}
+
+def _detect_section_type(query: str) -> str | None:
+    """쿼리에서 section_type 힌트를 감지한다."""
+    for keyword, section_type in SECTION_TYPE_HINTS.items():
+        if keyword in query:
+            return section_type
+    return None
+
 async def rag_retrieve_node(state: AgentState) -> AgentState:
     """질문과 관련된 문서 청크 검색"""
     try:
         store = get_rag_store()
-        docs = store.similarity_search(state["query"], k=3)
+        query = state["query"]
 
-        if docs:
-            rag_context = "\n\n".join([doc.page_content for doc in docs])
-            logger.info(f"RAG 문서 {len(docs)}개 검색됨")
+        # section_type 힌트 감지
+        section_type = _detect_section_type(query)
+
+        if section_type:
+            # 전체 검색 후 section_type 필터링
+            all_docs = store.similarity_search(query, k=20)
+            filtered = [
+                doc for doc in all_docs
+                if doc.metadata.get("section_type") == section_type
+            ]
+            # 필터 결과 없으면 전체 결과 사용
+            docs = filtered[:3] if filtered else all_docs[:3]
+            logger.info(f"RAG 섹션 필터: {section_type} → {len(filtered)}개 중 {len(docs)}개")
         else:
-            rag_context = ""
-            logger.info("관련 RAG 문서 없음")
+            docs = store.similarity_search(query, k=3)
+            logger.info(f"RAG 문서 {len(docs)}개 검색됨")
 
+        rag_context = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
         return {**state, "rag_context": rag_context}
+
     except Exception as e:
         logger.error(f"RAG 검색 실패: {e}")
         return {**state, "rag_context": ""}
