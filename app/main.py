@@ -5,10 +5,12 @@ from app.db.postgres import init_db
 from app.db.redis_client import get_redis, close_redis
 from app.api.routes import router
 from app.api.settings import router as settings_router
+from app.agents.orchestrator import init_graph
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    await init_db()       # 1. 테이블 생성
+    await init_graph()    # 2. 그래프 빌드 (테이블 존재 보장)
     await get_redis()
     print("DB and Redis connected")
     yield

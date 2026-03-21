@@ -203,10 +203,3 @@ app/
     ├── postgres.py
     ├── vector_store.py
     └── redis_client.py
-
-## 남은 작업 (Issues)
-- #3  커스텀 에이전트 추가 / 삭제 API
-- #4  에이전트별 LLM 모델 설정 API
-- #9  기획서 파싱 Agent
-- #10 Planner Agent
-- #11 Writer Agent
