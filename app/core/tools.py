@@ -1,7 +1,10 @@
 from langchain_core.tools import tool
 from datetime import datetime, timezone, timedelta
 import os
-import aiofiles
+import asyncio
+import aiosmtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 KST = timezone(timedelta(hours=9))
 
@@ -18,7 +21,6 @@ def get_workspace_path() -> str:
     """현재 작업 폴더 경로를 반환합니다. 파일 생성/읽기 전에 호출하세요."""
     from app.db.postgres import AsyncSessionLocal, AppSettings
     from sqlalchemy import select
-    import asyncio
 
     async def _get():
         async with AsyncSessionLocal() as session:
@@ -71,3 +73,35 @@ def read_file(filename: str) -> str:
         return f"파일 내용:\n{content}"
     except Exception as e:
         return f"파일 읽기 실패: {e}"
+
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """이메일을 전송합니다.
+    to: 수신자 이메일 주소
+    subject: 이메일 제목
+    body: 이메일 본문 (마크다운 지원)
+    """
+    from app.core.config import settings
+
+    async def _send():
+        try:
+            message = MIMEMultipart("alternative")
+            message["From"] = settings.smtp_user
+            message["To"] = to
+            message["Subject"] = subject
+
+            message.attach(MIMEText(body, "plain", "utf-8"))
+
+            await aiosmtplib.send(
+                message,
+                hostname=settings.smtp_host,
+                port=settings.smtp_port,
+                username=settings.smtp_user,
+                password=settings.smtp_password,
+                start_tls=True,
+            )
+            return f"이메일 전송 완료: {to}"
+        except Exception as e:
+            return f"이메일 전송 실패: {e}"
+
+    return asyncio.get_event_loop().run_until_complete(_send())

@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     db_user: str = "dev"
     db_password: str = "dev"
 
+    # SMTP
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+
     # App
     app_env: str = "development"
     app_port: int = 8000

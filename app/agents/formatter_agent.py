@@ -2,7 +2,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.state import AgentState
 from app.core.prompts import FORMAT_PROMPT
 from app.core.utils import get_llm
-from app.core.tools import create_file, read_file, get_workspace_path
+from app.core.tools import create_file, read_file, get_workspace_path, send_email
 from app.core.logger import get_logger
 
 logger = get_logger("formatter_agent")
@@ -15,7 +15,7 @@ FORMATTER_SYSTEM_PROMPT = """당신은 리포트 작성 전문가입니다.
 
 async def format_node(state: AgentState) -> AgentState:
     llm = get_llm()
-    llm_with_tools = llm.bind_tools([create_file, read_file, get_workspace_path])
+    llm_with_tools = llm.bind_tools([create_file, read_file, get_workspace_path, send_email])
 
     urls = [
         result.get("link", "")
@@ -44,7 +44,10 @@ async def format_node(state: AgentState) -> AgentState:
                 elif tool_call["name"] == "read_file":
                     result = read_file.invoke(tool_call["args"])
                     logger.info(f"파일 읽기: {result}")
-
+                elif tool_call["name"] == "send_email":
+                    result = send_email.invoke(tool_call["args"])
+                    logger.info(f"이메일 전송: {result}")
+                    
         logger.info("최종 답변 포맷 완료")
         return {
             **state,
