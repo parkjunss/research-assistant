@@ -7,8 +7,19 @@ from app.core.logger import get_logger
 
 logger = get_logger("summarizer_agent")
 
-async def summarize_node(state: AgentState) -> AgentState:
-    llm = get_llm()
+
+def make_summarize_node(model_name: str | None = None):
+    """model_name을 주입한 summarize_node를 반환하는 팩토리."""
+    llm = get_llm(model_name)
+
+    async def node(state: AgentState) -> AgentState:
+        return await _run_summarize(state, llm)
+
+    node.__name__ = "summarize_node"
+    return node
+
+
+async def _run_summarize(state: AgentState, llm) -> AgentState:
     search_results = state["search_results"]
     query = state["query"]
     memory_context = state.get("memory_context", "")
@@ -41,3 +52,8 @@ async def summarize_node(state: AgentState) -> AgentState:
 
     logger.info(f"요약 완료: {len(summaries)}개")
     return {**state, "summaries": list(summaries)}
+
+
+async def summarize_node(state: AgentState) -> AgentState:
+    """기본 LLM을 사용하는 summarize 노드 (model_name 미지정 시 fallback)."""
+    return await _run_summarize(state, get_llm())

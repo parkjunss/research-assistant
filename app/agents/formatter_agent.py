@@ -13,9 +13,22 @@ FORMATTER_SYSTEM_PROMPT = """당신은 리포트 작성 전문가입니다.
 사용자가 파일 읽기를 요청하면 read_file 툴을 호출하세요.
 형식 외 추가 설명은 하지 마세요."""
 
-async def format_node(state: AgentState) -> AgentState:
-    llm = get_llm()
-    llm_with_tools = llm.bind_tools([create_file, read_file, get_workspace_path, send_email])
+_TOOLS = [create_file, read_file, get_workspace_path, send_email]
+
+
+def make_format_node(model_name: str | None = None):
+    """model_name을 주입한 format_node를 반환하는 팩토리."""
+    llm = get_llm(model_name)
+
+    async def node(state: AgentState) -> AgentState:
+        return await _run_format(state, llm)
+
+    node.__name__ = "format_node"
+    return node
+
+
+async def _run_format(state: AgentState, llm) -> AgentState:
+    llm_with_tools = llm.bind_tools(_TOOLS)
 
     urls = [
         result.get("link", "")
@@ -47,7 +60,7 @@ async def format_node(state: AgentState) -> AgentState:
                 elif tool_call["name"] == "send_email":
                     result = send_email.invoke(tool_call["args"])
                     logger.info(f"이메일 전송: {result}")
-                    
+
         logger.info("최종 답변 포맷 완료")
         return {
             **state,
@@ -57,3 +70,8 @@ async def format_node(state: AgentState) -> AgentState:
     except Exception as e:
         logger.error(f"포맷 실패: {e}")
         raise
+
+
+async def format_node(state: AgentState) -> AgentState:
+    """기본 LLM을 사용하는 format 노드 (model_name 미지정 시 fallback)."""
+    return await _run_format(state, get_llm())

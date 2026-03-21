@@ -166,13 +166,17 @@ async def list_documents():
 # ── 에이전트 CRUD ─────────────────────────────────────────────
 
 @router.get("/agents")
-async def list_agents():
+async def list_agents(builtin: bool | None = None):
     """
-    현재 등록된 모든 커스텀 에이전트 목록을 반환한다.
-    내장 고정 노드(memory, rag, format 등)는 포함되지 않는다.
+    에이전트 목록 반환.
+    - builtin=true  → 내장 에이전트만
+    - builtin=false → 커스텀 에이전트만
+    - 미지정         → 전체
     """
     try:
         agents = await get_all_agents()
+        if builtin is not None:
+            agents = [a for a in agents if a["is_builtin"] == builtin]
         return {"agents": agents, "count": len(agents)}
     except Exception as e:
         logger.error(f"에이전트 목록 조회 실패: {e}")
@@ -249,6 +253,9 @@ async def remove_agent(name: str):
 
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        # 내장 에이전트 삭제 시도 포함
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         logger.error(f"에이전트 삭제 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))

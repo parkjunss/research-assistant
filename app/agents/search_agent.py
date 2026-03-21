@@ -27,7 +27,19 @@ QUERY_SYSTEM_PROMPT = """당신은 검색 쿼리 최적화 전문가입니다.
 - 입력: "오늘 최신 AI 뉴스 알려줘" → 출력: "AI 뉴스 2026년 3월 21일"
 """
 
-async def search_node(state: AgentState) -> AgentState:
+
+def make_search_node(model_name: str | None = None):
+    """model_name을 주입한 search_node를 반환하는 팩토리."""
+    llm = get_llm(model_name)
+
+    async def node(state: AgentState) -> AgentState:
+        return await _run_search(state, llm)
+
+    node.__name__ = "search_node"
+    return node
+
+
+async def _run_search(state: AgentState, llm) -> AgentState:
     query = state["query"]
 
     if state.get("critique"):
@@ -37,7 +49,6 @@ async def search_node(state: AgentState) -> AgentState:
             query = improved
 
     try:
-        llm = get_llm()
         llm_with_tools = llm.bind_tools([get_today_date])
 
         response = await llm_with_tools.ainvoke([
@@ -74,3 +85,8 @@ async def search_node(state: AgentState) -> AgentState:
         "search_results": results,
         "retry_count": state.get("retry_count", 0),
     }
+
+
+async def search_node(state: AgentState) -> AgentState:
+    """기본 LLM을 사용하는 search 노드 (model_name 미지정 시 fallback)."""
+    return await _run_search(state, get_llm())

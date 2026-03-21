@@ -38,19 +38,21 @@ class AppSettings(Base):
 
 class AgentConfig(Base):
     """
-    커스텀 에이전트 설정 테이블.
+    에이전트 설정 테이블. 내장 에이전트와 커스텀 에이전트를 함께 관리한다.
 
-    position 규칙 (고정 노드는 건드리지 않음):
-        0   = memory_retrieve  (고정)
-        5   = rag_retrieve     (고정)
-        10  = search           (기본 동적)
-        20  = summarize        (기본 동적)
-        30  = critic           (기본 동적)
-        90  = format           (고정)
-        95  = memory_save      (고정)
+    is_builtin=True  → 내장 에이전트 (model_name만 수정 가능)
+    is_builtin=False → 커스텀 에이전트 (모든 필드 수정 가능)
 
-    커스텀 에이전트는 10~89 사이 임의 position 지정 가능.
-    같은 position 불허 (unique 제약).
+    position 규칙:
+        0   = memory_retrieve  (고정, DB 미관리)
+        5   = rag_retrieve     (고정, DB 미관리)
+        10  = search           (내장)
+        20  = summarize        (내장)
+        30  = critic           (내장)
+        40  = format           (내장)
+        90  = memory_save      (고정, DB 미관리)
+
+    커스텀 에이전트는 10~89 사이 임의 position 지정 가능 (내장과 중복 불가).
     """
     __tablename__ = "agent_configs"
 
@@ -59,9 +61,19 @@ class AgentConfig(Base):
     system_prompt = Column(Text, nullable=False)
     position      = Column(Integer, unique=True, nullable=False)
     enabled       = Column(Boolean, default=True, nullable=False)
-    model_name    = Column(String(100), nullable=True)   # None → 기본 LLM (#4 연결 포인트)
+    is_builtin    = Column(Boolean, default=False, nullable=False)
+    model_name    = Column(String(100), nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# 내장 에이전트 seed 데이터
+_BUILTIN_AGENTS = [
+    {"name": "search",    "position": 10, "system_prompt": "DuckDuckGo 검색 및 쿼리 최적화"},
+    {"name": "summarize", "position": 20, "system_prompt": "검색 결과 map-reduce 요약"},
+    {"name": "critic",    "position": 30, "system_prompt": "사실 검증 및 재검색 판단"},
+    {"name": "format",    "position": 40, "system_prompt": "마크다운 응답 생성"},
+]
 
 
 # ── 기존 함수 ────────────────────────────────────────────────
@@ -69,6 +81,26 @@ class AgentConfig(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _seed_builtin_agents()
+
+
+async def _seed_builtin_agents():
+    """내장 에이전트가 DB에 없으면 초기 데이터를 삽입한다."""
+    async with AsyncSessionLocal() as session:
+        for data in _BUILTIN_AGENTS:
+            exists = await session.execute(
+                select(AgentConfig).where(AgentConfig.name == data["name"])
+            )
+            if not exists.scalar_one_or_none():
+                session.add(AgentConfig(
+                    name=data["name"],
+                    system_prompt=data["system_prompt"],
+                    position=data["position"],
+                    enabled=True,
+                    is_builtin=True,
+                    model_name=None,
+                ))
+        await session.commit()
 
 
 async def save_conversation(session_id: str, query: str, answer: str):
@@ -190,16 +222,9 @@ async def create_agent(
 async def update_agent(name: str, **kwargs) -> dict:
     """
     에이전트 설정을 부분 수정한다.
-    수정 가능 필드: system_prompt, position, enabled, model_name
+    - 내장 에이전트: model_name만 수정 가능
+    - 커스텀 에이전트: system_prompt, position, enabled, model_name 수정 가능
     """
-    allowed = {"system_prompt", "position", "enabled", "model_name"}
-    invalid = set(kwargs) - allowed
-    if invalid:
-        raise ValueError(f"수정 불가능한 필드: {invalid}")
-
-    if "position" in kwargs:
-        _validate_position(kwargs["position"])
-
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(AgentConfig).where(AgentConfig.name == name)
@@ -208,8 +233,20 @@ async def update_agent(name: str, **kwargs) -> dict:
         if not agent:
             raise KeyError(f"에이전트를 찾을 수 없습니다: {name}")
 
-        # position 중복 체크 (자기 자신 제외)
+        if agent.is_builtin:
+            allowed = {"model_name"}
+        else:
+            allowed = {"system_prompt", "position", "enabled", "model_name"}
+
+        invalid = set(kwargs) - allowed
+        if invalid:
+            raise ValueError(
+                f"수정 불가능한 필드: {invalid}. "
+                f"{'내장 에이전트는 model_name만 수정 가능합니다.' if agent.is_builtin else ''}"
+            )
+
         if "position" in kwargs:
+            _validate_position(kwargs["position"])
             dup = await session.execute(
                 select(AgentConfig)
                 .where(AgentConfig.position == kwargs["position"])
@@ -228,7 +265,7 @@ async def update_agent(name: str, **kwargs) -> dict:
 
 
 async def delete_agent(name: str) -> None:
-    """커스텀 에이전트를 삭제한다."""
+    """커스텀 에이전트를 삭제한다. 내장 에이전트는 삭제 불가."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(AgentConfig).where(AgentConfig.name == name)
@@ -236,8 +273,20 @@ async def delete_agent(name: str) -> None:
         agent = result.scalar_one_or_none()
         if not agent:
             raise KeyError(f"에이전트를 찾을 수 없습니다: {name}")
+        if agent.is_builtin:
+            raise ValueError(f"내장 에이전트는 삭제할 수 없습니다: {name}")
         await session.delete(agent)
         await session.commit()
+
+
+async def get_agent_model_name(name: str) -> str | None:
+    """에이전트의 model_name을 반환한다. 없으면 None (기본 LLM 사용)."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(AgentConfig.model_name).where(AgentConfig.name == name)
+        )
+        row = result.scalar_one_or_none()
+        return row  # None이면 기본 LLM
 
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────
@@ -249,20 +298,24 @@ def _agent_to_dict(agent: AgentConfig) -> dict:
         "system_prompt": agent.system_prompt,
         "position":      agent.position,
         "enabled":       agent.enabled,
+        "is_builtin":    agent.is_builtin,
         "model_name":    agent.model_name,
         "created_at":    agent.created_at.isoformat(),
         "updated_at":    agent.updated_at.isoformat() if agent.updated_at else None,
     }
 
 
-# position 10~89 만 허용 (고정 노드 범위 보호)
-_RESERVED_POSITIONS = {0, 5, 90, 95}
+# position 예약값: 고정 노드 + 내장 에이전트
+_RESERVED_POSITIONS = {0, 5, 10, 20, 30, 40, 90}
 _MIN_CUSTOM_POSITION = 10
 _MAX_CUSTOM_POSITION = 89
 
 def _validate_position(position: int) -> None:
     if position in _RESERVED_POSITIONS:
-        raise ValueError(f"position {position}은 고정 노드 예약값입니다.")
+        raise ValueError(
+            f"position {position}은 예약값입니다 (고정 노드 또는 내장 에이전트). "
+            f"예약된 position: {sorted(_RESERVED_POSITIONS)}"
+        )
     if not (_MIN_CUSTOM_POSITION <= position <= _MAX_CUSTOM_POSITION):
         raise ValueError(
             f"position은 {_MIN_CUSTOM_POSITION}~{_MAX_CUSTOM_POSITION} 범위여야 합니다."
