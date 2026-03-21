@@ -208,3 +208,18 @@ app/
     ├── postgres.py
     ├── vector_store.py
     └── redis_client.py
+
+## 구현 완료 기능
+
+- ✅ 멀티 에이전트 파이프라인 (LangGraph)
+- ✅ 오늘 날짜 Tool (KST 기준)
+- ✅ 파일 생성 / 읽기 Tool
+- ✅ 이메일 전송 Tool (Gmail SMTP)
+- ✅ 작업 폴더 설정 API
+- ✅ 장기 메모리 (pgvector)
+- ✅ RAG 문서 검색 (pgvector)
+- ✅ 커스텀 에이전트 추가 / 삭제 API
+- ✅ 에이전트별 LLM 모델 설정 API
+- ✅ 기획서 파싱 Agent (문서 타입별 프롬프트 분리)
+- ✅ Planner Agent (작업 분해)
+- ✅ Writer Agent (결과물 초안 작성
