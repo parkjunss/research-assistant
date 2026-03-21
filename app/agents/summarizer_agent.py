@@ -1,7 +1,6 @@
 import asyncio
 from langchain_core.messages import HumanMessage
 from app.core.state import AgentState
-from app.core.config import settings
 from app.core.prompts import SUMMARIZE_PROMPT
 from app.core.utils import get_llm
 from app.core.logger import get_logger
@@ -12,6 +11,7 @@ async def summarize_node(state: AgentState) -> AgentState:
     llm = get_llm()
     search_results = state["search_results"]
     query = state["query"]
+    memory_context = state.get("memory_context", "")
 
     if not search_results:
         logger.warning("검색 결과 없음 — 요약 스킵")
@@ -24,6 +24,7 @@ async def summarize_node(state: AgentState) -> AgentState:
             prompt = SUMMARIZE_PROMPT.format(
                 search_results=chunk,
                 query=query,
+                memory_context=memory_context or "없음",
             )
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             return response.content

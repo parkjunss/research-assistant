@@ -16,7 +16,11 @@ SUMMARIZE_PROMPT = """
 
 원본 질문: {query}
 
+과거 관련 대화:
+{memory_context}
+
 핵심 내용만 추출해서 3-5문장으로 요약하세요.
+과거 대화가 있으면 참고해서 더 나은 답변을 제공하세요.
 """
 
 CRITIC_PROMPT = """

@@ -33,6 +33,7 @@ async def query(request: QueryRequest):
             "should_retry": False,
             "retry_count": 0,
             "final_answer": None,
+            "memory_context": None,
             "messages": [{"role": "user", "content": request.query}],
         }
 
