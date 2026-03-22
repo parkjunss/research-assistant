@@ -91,6 +91,7 @@ async def query(request: QueryRequest):
             "memory_context": None,
             "rag_context": None,
             "is_coding": False,
+            "route_type": None,
             "messages": [{"role": "user", "content": request.query}],
         }
 

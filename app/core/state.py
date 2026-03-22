@@ -12,4 +12,5 @@ class AgentState(TypedDict):
     memory_context: Optional[str]
     rag_context: Optional[str]
     is_coding: bool
+    route_type: Optional[str]
     messages: Annotated[List[dict], operator.add]

@@ -10,6 +10,7 @@ from app.agents.memory_agent import memory_retrieve_node, memory_save_node
 from app.agents.rag_agent import rag_retrieve_node
 from app.agents.custom_agent import make_custom_node
 from app.agents.code_agent import code_node, is_coding_question
+from app.agents.reasoning_agent import reasoning_node, route_after_reasoning
 from app.core.logger import get_logger
 
 logger = get_logger("orchestrator")
@@ -92,8 +93,9 @@ async def build_graph_async():
     # ── 고정 노드 ──
     graph.add_node("memory_retrieve", memory_retrieve_node)
     graph.add_node("rag_retrieve",    rag_retrieve_node)
+    graph.add_node("reasoning",       reasoning_node)   # 추가
     graph.add_node("memory_save",     memory_save_node)
-    graph.add_node("code",            code_node) 
+    graph.add_node("code",            code_node)
 
     # ── 동적 노드 ──
     for name, fn in dynamic_nodes:
@@ -103,19 +105,16 @@ async def build_graph_async():
     # ── 엣지 연결 ──
     graph.set_entry_point("memory_retrieve")
     graph.add_edge("memory_retrieve", "rag_retrieve")
+    graph.add_edge("rag_retrieve",    "reasoning")      # reasoning으로 변경
 
     first = node_names[0] if node_names else "memory_save"
 
-    # rag_retrieve 후 코딩 질문이면 code, 아니면 first로 분기
-    def route_by_query_type(state: AgentState) -> str:
-        if is_coding_question(state["query"]):
-            logger.info("코딩 질문 감지 → Code Agent 분기")
-            return "code"
-        return "search"
-
-    graph.add_conditional_edges("rag_retrieve", route_by_query_type, {
-        "code":   "code",
-        "search": first,
+    # reasoning 후 route_type에 따라 분기
+    graph.add_conditional_edges("reasoning", route_after_reasoning, {
+        "code":     "code",
+        "planning": first,   # Planner Agent 추가 전까지 search로 폴백
+        "writing":  first,   # Writer Agent 추가 전까지 search로 폴백
+        "search":   first,
     })
 
     # code → memory_save 직행
