@@ -3,14 +3,10 @@ from langchain_postgres import PGVector
 from langchain_core.documents import Document
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+import requests
 from app.core.config import settings
 from app.core.logger import get_logger
-import requests
 
-from sentence_transformers import CrossEncoder
-import asyncio
-
-_reranker_model = None
 
 logger = get_logger("vector_store")
 
@@ -142,39 +138,36 @@ async def _bm25_search(
     except Exception as e:
         logger.warning(f"BM25 검색 실패 → 빈 결과 반환: {e}")
         return []
-    
-def _get_reranker() -> CrossEncoder:
-    """CrossEncoder 모델을 싱글톤으로 로드한다."""
-    global _reranker_model
-    if _reranker_model is None:
-        logger.info(f"Re-ranker 모델 로딩: {settings.reranker_model}")
-        _reranker_model = CrossEncoder(
-            settings.reranker_model,
-            max_length=512,
-        )
-        logger.info("Re-ranker 모델 로딩 완료")
-    return _reranker_model
 
 async def rerank(query: str, docs: list[Document], top_k: int = 5) -> list[Document]:
     """
-    CrossEncoder로 문서를 재순위화한다.
+    Ollama embed API로 query-document 유사도를 계산해서 재순위화한다.
     실패 시 원본 순서 반환.
     """
     if not docs:
         return docs
 
     try:
-        reranker = _get_reranker()
+        # query + doc 쌍을 하나의 배열로 임베딩
+        inputs = [f"query: {query}"] + [f"passage: {doc.page_content}" for doc in docs]
 
-        # CrossEncoder 입력: [(query, doc), ...]
-        pairs = [(query, doc.page_content) for doc in docs]
-
-        # CPU 블로킹 작업을 별도 스레드에서 실행
-        loop = asyncio.get_event_loop()
-        scores = await loop.run_in_executor(
-            None,
-            lambda: reranker.predict(pairs)
+        response = requests.post(
+            f"{settings.ollama_base_url}/api/embed",
+            json={
+                "model": settings.reranker_model,
+                "input": inputs,
+            },
+            timeout=30,
         )
+        response.raise_for_status()
+        data = response.json()
+
+        embeddings = data["embeddings"]
+        query_emb = embeddings[0]
+        doc_embs = embeddings[1:]
+
+        # 코사인 유사도 계산
+        scores = [_cosine_similarity(query_emb, doc_emb) for doc_emb in doc_embs]
 
         # 점수 기준 정렬
         scored_docs = sorted(
@@ -190,3 +183,13 @@ async def rerank(query: str, docs: list[Document], top_k: int = 5) -> list[Docum
     except Exception as e:
         logger.warning(f"Re-ranking 실패 → 원본 순서 반환: {e}")
         return docs[:top_k]
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """두 벡터의 코사인 유사도를 계산한다."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x ** 2 for x in a) ** 0.5
+    norm_b = sum(x ** 2 for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)

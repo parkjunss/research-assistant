@@ -345,3 +345,83 @@ REASONING_PROMPT = """
 - writing : 문서 작성, 보고서, 기획서, 이메일 초안
 - search  : 정보 검색, 개념 설명, 사실 확인, 최신 뉴스 (기본값)
 """
+
+PAPER_ANALYZER_PROMPT = """
+당신은 논문 분석 전문가입니다.
+아래 논문 내용을 읽고 구현에 필요한 기술 명세서를 작성하세요.
+
+논문 내용:
+{content}
+
+아래 JSON 형식으로만 반환하세요:
+{{
+  "title": "논문 제목",
+  "problem": "해결하려는 문제 (1-3문장)",
+  "algorithm": "핵심 알고리즘 설명 (단계별)",
+  "inputs": [
+    {{"name": "입력명", "type": "타입", "description": "설명"}}
+  ],
+  "outputs": [
+    {{"name": "출력명", "type": "타입", "description": "설명"}}
+  ],
+  "constraints": ["제약조건1", "제약조건2"],
+  "language": "Python",
+  "dependencies": ["필요 라이브러리"]
+}}
+"""
+
+PAPER_CODE_PROMPT = """
+당신은 시니어 소프트웨어 엔지니어입니다.
+아래 기술 명세서를 바탕으로 Python 코드를 작성하세요.
+
+기술 명세서:
+{spec}
+
+[작성 규칙]
+1. 명세서에 명시된 입출력 구조를 정확히 구현하세요.
+2. 타입 힌트와 docstring을 반드시 포함하세요.
+3. 예외 처리를 포함하세요.
+4. 명세서에 없는 라이브러리는 사용하지 마세요.
+5. 코드만 반환하세요. 설명 없이 순수 Python 코드만 반환하세요.
+6. 코드 펜스(```python ```) 없이 반환하세요.
+"""
+
+PAPER_CRITIC_PROMPT = """
+당신은 코드 리뷰 전문가입니다.
+아래 코드의 실행 결과와 기술 명세서를 비교해서 검증하세요.
+
+기술 명세서:
+{spec}
+
+코드:
+{code}
+
+실행 결과:
+{execution_result}
+
+아래 JSON 형식으로만 반환하세요:
+{{
+  "passed": true,
+  "issues": ["문제점1", "문제점2"],
+  "fixed_code": "수정된 코드 (passed=true면 null)",
+  "summary": "검증 결과 요약"
+}}
+"""
+
+PAPER_SERVICE_PROMPT = """
+당신은 백엔드 개발자입니다.
+아래 코드를 FastAPI 서비스로 래핑하세요.
+
+논문 제목: {title}
+핵심 코드:
+{code}
+
+기술 명세서:
+{spec}
+
+[작성 규칙]
+1. FastAPI 엔드포인트를 생성하세요.
+2. Pydantic 모델로 입출력을 정의하세요.
+3. 코드만 반환하세요. 설명 없이 순수 Python 코드만 반환하세요.
+4. 코드 펜스(```python ```) 없이 반환하세요.
+"""

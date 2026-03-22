@@ -7,6 +7,8 @@ from app.agents.rag_agent import ingest_document
 from app.agents.plan_parser_agent import parse_and_ingest_plan
 from app.agents.planner_agent import run_planner
 from app.agents.writer_agent import run_writer
+from app.agents.paper_agent import run_paper_pipeline
+
 from app.core.state import AgentState
 from app.db.postgres import (
     save_conversation,
@@ -19,7 +21,6 @@ from app.db.postgres import (
 )
 from app.db.vector_store import get_rag_store
 from app.core.logger import get_logger
-
 import pypdf
 import io
 
@@ -413,4 +414,41 @@ async def remove_agent(name: str):
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         logger.error(f"에이전트 삭제 실패: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@router.post("/paper")
+async def analyze_paper(file: UploadFile = File(...)):
+    """논문 PDF를 분석하여 코드를 생성한다."""
+    logger.info(f"논문 업로드: {file.filename}")
+    try:
+        content_bytes = await file.read()
+
+        if file.filename.endswith(".pdf"):
+            pdf_reader = pypdf.PdfReader(io.BytesIO(content_bytes))
+            text = "\n".join([page.extract_text() or "" for page in pdf_reader.pages])
+        elif file.filename.endswith((".txt", ".md")):
+            text = content_bytes.decode("utf-8")
+        else:
+            raise HTTPException(status_code=400, detail="PDF, TXT, MD 파일만 지원합니다.")
+
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="파일에서 텍스트를 추출할 수 없습니다.")
+
+        result = await run_paper_pipeline(
+            filename=file.filename,
+            text=text,
+        )
+
+        return {
+            "title":    result["title"],
+            "filepath": result["filepath"],
+            "spec":     result["spec"],
+            "message":  f"논문 분석 완료 — {result['title']}",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"논문 분석 실패: {e}")
         raise HTTPException(status_code=500, detail=str(e))
