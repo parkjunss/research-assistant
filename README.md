@@ -1,19 +1,24 @@
 # AI Research Assistant
 
 멀티 에이전트 아키텍처 기반의 AI 리서치 어시스턴트입니다.
-사용자 질문에 대해 검색 → 요약 → 검증 → 응답 파이프라인을 자동으로 실행합니다.
+사용자 질문에 대해 자동으로 검색 → 요약 → 검증 → 응답 파이프라인을 실행하며,
+코딩, 문서 작성, 논문 분석, 작업 분해 등 다양한 작업을 지원합니다.
 
 ## 아키텍처
 
 ```
 사용자 질문
-  → Memory Retrieve  (장기 메모리 검색)
-  → RAG Retrieve     (업로드 문서 검색)
-  → Search Agent     (DuckDuckGo 검색 + 날짜 툴)
-  → Summarizer Agent (map-reduce 요약)
-  → Critic Agent     (사실 검증 + 재검색 판단)
-  → Formatter Agent  (마크다운 응답 + 파일/이메일 툴)
-  → Memory Save      (장기 메모리 저장)
+  → Memory Retrieve   (장기 메모리 검색)
+  → RAG Retrieve      (하이브리드 검색 + Re-ranking)
+  → Reasoning Agent   (질문 유형 분류 → 동적 라우팅)
+      ├─ code     → Code Agent        (코드 생성/리뷰/버그 분석)
+      ├─ planning → Planner Agent     (작업 분해)
+      ├─ writing  → Writer Agent      (문서 작성)
+      └─ search   → Search Agent      (DuckDuckGo + 날짜 툴)
+                    → Summarizer Agent (map-reduce 요약)
+                    → Critic Agent     (사실 검증 + 재검색)
+                    → Formatter Agent  (마크다운 응답)
+  → Memory Save       (장기 메모리 저장)
 ```
 
 ## 기술 스택
@@ -23,10 +28,11 @@
 | API 서버 | FastAPI, Uvicorn |
 | 에이전트 오케스트레이션 | LangGraph |
 | LLM | Google Gemini (production), Ollama (development) |
-| 임베딩 | Ollama nomic-embed-text |
-| 검색 | DuckDuckGo Search |
+| 임베딩 | Ollama bge-m3 |
+| Re-ranking | Ollama embed 코사인 유사도 |
+| 검색 | DuckDuckGo Search + BM25 하이브리드 |
 | 벡터 DB | pgvector (PostgreSQL 확장) |
-| 데이터베이스 | PostgreSQL (대화 히스토리, 설정) |
+| 데이터베이스 | PostgreSQL |
 | 캐시 | Redis |
 | 테스트 | pytest, pytest-asyncio |
 | 패키지 관리 | uv |
@@ -35,17 +41,23 @@
 ## 에이전트 & 툴
 
 ### 에이전트
+
 | 에이전트 | 역할 |
 |---|---|
-| Memory Retrieve | 과거 대화에서 관련 컨텍스트 검색 |
-| RAG Retrieve | 업로드된 문서에서 관련 내용 검색 |
+| Reasoning Agent | LLM 기반 질문 유형 분류 + 동적 라우팅 |
+| Memory Retrieve | 과거 대화 컨텍스트 검색 |
+| RAG Retrieve | 하이브리드 검색 + Re-ranking |
 | Search Agent | DuckDuckGo 검색 + 쿼리 최적화 |
 | Summarizer Agent | 검색 결과 map-reduce 요약 |
 | Critic Agent | 사실 검증 + 재검색 트리거 |
 | Formatter Agent | 마크다운 응답 생성 |
+| Code Agent | 코드 생성, 리뷰, 버그 분석 |
+| Planner Agent | 기획서 기반 작업 분해 |
+| Writer Agent | 컨텍스트 기반 문서 작성 |
 | Memory Save | 대화 결과 장기 메모리 저장 |
 
 ### 툴
+
 | 툴 | 역할 |
 |---|---|
 | get_today_date | 현재 날짜 반환 (KST) |
@@ -53,6 +65,32 @@
 | create_file | .md / .txt 파일 생성 |
 | read_file | 파일 읽기 |
 | send_email | Gmail SMTP 이메일 전송 |
+
+## RAG 파이프라인
+
+```
+문서 업로드
+  → 문서 타입 분류 (PLAN/REPORT/ARTICLE/LEGAL/RESUME/GENERAL)
+  → 타입별 LLM 파싱 + 섹션 메타데이터 태깅
+  → 타입별 청킹 전략 적용
+  → pgvector 저장
+
+질문 시 검색
+  → 하이브리드 검색 (벡터 0.7 + BM25 0.3, RRF 통합)
+  → Re-ranking (bge-m3 코사인 유사도)
+  → 상위 5개 컨텍스트 → LLM 주입
+```
+
+## 논문 분석 파이프라인
+
+```
+POST /api/v1/paper
+  → Paper Analyzer  (알고리즘/입출력/제약조건 추출 → 기술 명세서)
+  → Code Generator  (명세서 기반 Python 코드 생성)
+  → Code Critic     (subprocess 실행 + Self-Correction, 최대 2회)
+  → Service Builder (FastAPI 래핑 + Dockerfile 생성)
+  → 파일 저장       (solution.py, service.py, spec.json, Dockerfile)
+```
 
 ## 시작하기
 
@@ -66,8 +104,9 @@
 ### Ollama 모델 준비
 
 ```bash
-ollama pull qwen2.5:14b
-ollama pull nomic-embed-text
+ollama pull qwen2.5:14b       # LLM
+ollama pull bge-m3            # 임베딩 + Re-ranking
+ollama pull nomic-embed-text  # 폴백용
 ```
 
 ### 환경 변수 설정
@@ -100,15 +139,8 @@ docker compose up --build
 POST /api/v1/query
 ```
 ```json
-// Request
 {
   "query": "LangGraph란 무엇인가요?",
-  "session_id": "user-123"
-}
-
-// Response
-{
-  "answer": "## 답변\nLangGraph는...",
   "session_id": "user-123"
 }
 ```
@@ -121,16 +153,34 @@ GET /api/v1/history/{session_id}?limit=10
 ### 문서 업로드 (RAG)
 ```
 POST /api/v1/documents
-Content-Type: multipart/form-data
 ```
 ```bash
 curl -X POST http://localhost:8000/api/v1/documents \
   -F "file=@document.pdf"
 ```
 
-### 업로드된 문서 목록
+### 기획서 업로드 (구조화 파싱)
 ```
-GET /api/v1/documents
+POST /api/v1/documents/plan
+```
+
+### 논문 분석 → 코드 생성
+```
+POST /api/v1/paper
+```
+```bash
+curl -X POST http://localhost:8000/api/v1/paper \
+  -F "file=@paper.pdf"
+```
+
+### 작업 분해 (Planner)
+```
+POST /api/v1/plan
+```
+
+### 문서 작성 (Writer)
+```
+POST /api/v1/write
 ```
 
 ### 작업 폴더 설정
@@ -138,32 +188,44 @@ GET /api/v1/documents
 GET  /api/v1/settings/workspace
 PATCH /api/v1/settings/workspace
 ```
-```json
-{ "path": "/mnt/f/15_Project/workspace" }
+
+### 에이전트 관리
+```
+GET    /api/v1/agents
+POST   /api/v1/agents
+PATCH  /api/v1/agents/{name}
+DELETE /api/v1/agents/{name}
 ```
 
-### 서버 상태 확인
+### 서버 상태
 ```
 GET /health
 ```
 
-## 에이전트 설계 의사결정
+## 설계 의사결정
 
 ### LangGraph를 선택한 이유
 Critic Agent의 검증 결과에 따라 Search Agent로 되돌아가는 조건부 분기가 필요했습니다.
-단순 순차 실행이 아닌 루프 구조를 명시적으로 표현하기 위해 LangGraph의 `StateGraph`와 `add_conditional_edges`를 활용했습니다.
+단순 순차 실행이 아닌 루프 구조를 명시적으로 표현하기 위해 LangGraph의 `StateGraph`와
+`add_conditional_edges`를 활용했습니다.
 
-### 재시도 상한을 2회로 설정한 이유
-무한 루프 방지와 API 비용 제어 사이의 트레이드오프를 고려했습니다.
-검증 실패 시 개선된 쿼리로 재검색하지만, 2회 초과 시 현재까지의 결과로 응답을 생성합니다.
+### Reasoning Agent 설계
+LLM 기반 질문 유형 분류가 실패할 경우를 대비해 키워드 기반 폴백을 구현했습니다.
+LLM 호출 1회 추가 비용이 있지만 맥락을 이해한 정확한 라우팅이 가능합니다.
 
-### 장기 메모리 + RAG 분리 이유
-장기 메모리는 과거 대화 컨텍스트(사용자 맥락)를, RAG는 외부 문서 컨텍스트(도메인 지식)를 담당합니다.
-두 컨텍스트를 분리해서 각각 독립적으로 검색하고 Summarizer Agent에 주입합니다.
+### 하이브리드 검색 + Re-ranking
+벡터 검색만으로는 한글 기술 용어, 고유명사, 함수명 검색이 부정확했습니다.
+BM25 키워드 검색을 RRF로 혼합하고, bge-m3 임베딩 코사인 유사도로 재순위화하여
+검색 정확도를 크게 향상시켰습니다.
 
 ### pgvector를 선택한 이유
-별도 벡터 DB(Pinecone, Weaviate) 없이 기존 PostgreSQL에 확장으로 추가할 수 있어
-인프라 복잡도를 낮추면서 벡터 검색 기능을 구현할 수 있습니다.
+별도 벡터 DB 없이 기존 PostgreSQL 확장으로 벡터 검색을 구현하여
+인프라 복잡도를 낮추었습니다.
+
+### subprocess 코드 실행
+논문 분석 파이프라인에서 생성된 코드를 검증하기 위해 subprocess로 격리 실행합니다.
+10초 타임아웃과 stderr 캡처로 안전하게 실행하고, 실패 시 LLM이 코드를 수정하는
+Self-Correction 루프를 구현했습니다.
 
 ### Gemini / Ollama 전략
 `APP_ENV` 환경변수로 LLM을 전환합니다.
@@ -183,20 +245,20 @@ app/
 ├── main.py
 ├── api/
 │   ├── routes.py
-│   ├── postgres.py
 │   └── settings.py
 ├── agents/
 │   ├── orchestrator.py
+│   ├── reasoning_agent.py
 │   ├── memory_agent.py
 │   ├── rag_agent.py
 │   ├── search_agent.py
 │   ├── summarizer_agent.py
 │   ├── critic_agent.py
-│   ├── custom_agent.py
+│   ├── formatter_agent.py
+│   ├── code_agent.py
 │   ├── plan_parser_agent.py
 │   ├── planner_agent.py
-│   ├── writer_agent.py
-│   └── formatter_agent.py
+│   └── writer_agent.py
 ├── core/
 │   ├── config.py
 │   ├── state.py
@@ -208,18 +270,3 @@ app/
     ├── postgres.py
     ├── vector_store.py
     └── redis_client.py
-
-## 구현 완료 기능
-
-- ✅ 멀티 에이전트 파이프라인 (LangGraph)
-- ✅ 오늘 날짜 Tool (KST 기준)
-- ✅ 파일 생성 / 읽기 Tool
-- ✅ 이메일 전송 Tool (Gmail SMTP)
-- ✅ 작업 폴더 설정 API
-- ✅ 장기 메모리 (pgvector)
-- ✅ RAG 문서 검색 (pgvector)
-- ✅ 커스텀 에이전트 추가 / 삭제 API
-- ✅ 에이전트별 LLM 모델 설정 API
-- ✅ 기획서 파싱 Agent (문서 타입별 프롬프트 분리)
-- ✅ Planner Agent (작업 분해)
-- ✅ Writer Agent (결과물 초안 작성
