@@ -8,6 +8,7 @@ import io
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core.utils import get_llm
 from app.core.prompts import CLASSIFY_PROMPT, PARSE_PROMPTS
@@ -16,8 +17,41 @@ from app.core.logger import get_logger
 
 logger = get_logger("plan_parser_agent")
 
-_MAX_SECTION_LENGTH = 800
 _HEADER_LENGTH = 500  # 문서 타입 분류에 사용할 앞부분 길이
+
+# 문서 타입별 청킹 전략
+_CHUNK_STRATEGIES = {
+    "PLAN": {
+        "chunk_size": 600,
+        "chunk_overlap": 80,
+        "separators": ["\n\n", "\n", "。", ". ", " ", ""],
+    },
+    "REPORT": {
+        "chunk_size": 800,
+        "chunk_overlap": 100,
+        "separators": ["\n\n", "\n", "。", ". ", " ", ""],
+    },
+    "ARTICLE": {
+        "chunk_size": 500,
+        "chunk_overlap": 50,
+        "separators": ["\n\n", "\n", ". ", " ", ""],
+    },
+    "LEGAL": {
+        "chunk_size": 400,
+        "chunk_overlap": 60,
+        "separators": ["\n\n", "\n", ". ", " ", ""],
+    },
+    "RESUME": {
+        "chunk_size": 400,
+        "chunk_overlap": 40,
+        "separators": ["\n\n", "\n", ". ", " ", ""],
+    },
+    "GENERAL": {
+        "chunk_size": 500,
+        "chunk_overlap": 50,
+        "separators": ["\n\n", "\n", ". ", " ", ""],
+    },
+}
 
 
 async def parse_and_ingest_plan(
@@ -122,12 +156,27 @@ async def _parse_sections(text: str, doc_type: str, model_name: str | None) -> d
 
 # ── Document 빌드 ─────────────────────────────────────────────
 
+def _get_splitter(doc_type: str) -> RecursiveCharacterTextSplitter:
+    """문서 타입별 최적화된 텍스트 스플리터를 반환한다."""
+    strategy = _CHUNK_STRATEGIES.get(doc_type, _CHUNK_STRATEGIES["GENERAL"])
+    return RecursiveCharacterTextSplitter(
+        chunk_size=strategy["chunk_size"],
+        chunk_overlap=strategy["chunk_overlap"],
+        separators=strategy["separators"],
+        length_function=len,
+    )
+
 def _build_documents(
     filename: str,
     title: str,
     doc_type: str,
     sections: list[dict],
 ) -> list[Document]:
+    """
+    섹션 리스트를 langchain Document로 변환한다.
+    문서 타입별 청킹 전략을 적용한다.
+    """
+    splitter = _get_splitter(doc_type)
     docs = []
 
     for i, section in enumerate(sections):
@@ -135,16 +184,17 @@ def _build_documents(
         section_heading = section.get("heading", f"섹션 {i + 1}")
         content         = section.get("content", "")
 
-        # content가 dict나 list로 올 경우 JSON 문자열로 변환
-        if isinstance(content, dict) or isinstance(content, list):
-            logger.warning(f"섹션 {i+1} content가 {type(content).__name__} 타입 — 문자열 변환")
+        if isinstance(content, (dict, list)):
             import json
+            logger.warning(f"섹션 {i+1} content가 {type(content).__name__} 타입 — 문자열 변환")
             content = json.dumps(content, ensure_ascii=False)
 
         content = str(content).strip()
-
         if not content:
             continue
+
+        # 섹션 제목을 content 앞에 붙여 검색 정확도 향상
+        enriched_content = f"[{section_heading}]\n{content}"
 
         base_metadata = {
             "filename":        filename,
@@ -155,11 +205,16 @@ def _build_documents(
             "source":          "plan",
         }
 
-        if len(content) <= _MAX_SECTION_LENGTH:
-            docs.append(Document(page_content=content, metadata=base_metadata))
+        # 섹션이 짧으면 단일 Document
+        if len(enriched_content) <= splitter._chunk_size:
+            docs.append(Document(
+                page_content=enriched_content,
+                metadata=base_metadata,
+            ))
             continue
 
-        chunks = _split_by_length(content, _MAX_SECTION_LENGTH)
+        # 길면 타입별 스플리터로 분할
+        chunks = splitter.split_text(enriched_content)
         for j, chunk in enumerate(chunks):
             docs.append(Document(
                 page_content=chunk,
@@ -197,24 +252,3 @@ def _extract_docx(file_bytes: bytes) -> str:
 
     doc = docx.Document(io.BytesIO(file_bytes))
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
-
-
-def _split_by_length(text: str, max_len: int) -> list[str]:
-    sentences = re.split(r"(?<=[.。!?])\s+", text)
-    chunks, current = [], ""
-
-    for sentence in sentences:
-        if len(current) + len(sentence) <= max_len:
-            current += (" " if current else "") + sentence
-        else:
-            if current:
-                chunks.append(current)
-            while len(sentence) > max_len:
-                chunks.append(sentence[:max_len])
-                sentence = sentence[max_len:]
-            current = sentence
-
-    if current:
-        chunks.append(current)
-
-    return chunks

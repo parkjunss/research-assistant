@@ -3,12 +3,22 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.state import AgentState
 from app.db.vector_store import get_rag_store
 from app.core.logger import get_logger
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 
 logger = get_logger("rag_agent")
 
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=500,
     chunk_overlap=50,
+)
+
+# 일반 문서용 스플리터 (문단 단위 우선)
+_general_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=50,
+    separators=["\n\n", "\n", "。", ". ", " ", ""],
+    length_function=len,
 )
 
 # 쿼리 키워드 → section_type 매핑
@@ -67,10 +77,31 @@ async def rag_retrieve_node(state: AgentState) -> AgentState:
 async def ingest_document(filename: str, content: str, metadata: dict = {}) -> int:
     """문서를 청킹해서 벡터 스토어에 저장"""
     try:
-        docs = text_splitter.create_documents(
-            texts=[content],
-            metadatas=[{"filename": filename, **metadata}],
-        )
+        # 파일 확장자로 청킹 전략 결정
+        if filename.endswith(".md"):
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=600,
+                chunk_overlap=80,
+                separators=["\n## ", "\n### ", "\n\n", "\n", ". ", " ", ""],
+            )
+        elif filename.endswith(".pdf"):
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=800,
+                chunk_overlap=100,
+                separators=["\n\n", "\n", "。", ". ", " ", ""],
+            )
+        else:
+            splitter = _general_splitter
+
+        chunks = splitter.split_text(content)
+        docs = [
+            Document(
+                page_content=chunk,
+                metadata={"filename": filename, **metadata},
+            )
+            for chunk in chunks
+        ]
+
         store = get_rag_store()
         store.add_documents(docs)
         logger.info(f"문서 저장 완료: {filename} ({len(docs)}개 청크)")

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.1-flash-lite-preview"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:14b"
+    embedding_model: str = "bge-m3"
 
     # Search
     duckduckgo_max_results: int = 5

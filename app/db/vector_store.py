@@ -13,7 +13,7 @@ CONNECTION_STRING = (
 def get_embeddings():
     return OllamaEmbeddings(
         base_url=settings.ollama_base_url,
-        model="nomic-embed-text",
+        model=settings.embedding_model,
     )
 
 def get_memory_store() -> PGVector:
