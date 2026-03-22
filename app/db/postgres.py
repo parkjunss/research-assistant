@@ -82,7 +82,14 @@ _BUILTIN_AGENTS = [
 async def init_db():
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         await conn.run_sync(Base.metadata.create_all)
+        # langchain_pg_embedding 테이블에 FTS 인덱스 추가
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_embedding_fts
+            ON langchain_pg_embedding
+            USING gin(to_tsvector('simple', document))
+        """))
     await _seed_builtin_agents()
 
 

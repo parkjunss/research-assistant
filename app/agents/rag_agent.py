@@ -1,19 +1,11 @@
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.state import AgentState
-from app.db.vector_store import get_rag_store
+from app.db.vector_store import get_rag_store, hybrid_search, COLLECTION_RAG
 from app.core.logger import get_logger
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 
 logger = get_logger("rag_agent")
 
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=50,
-)
-
-# 일반 문서용 스플리터 (문단 단위 우선)
 _general_splitter = RecursiveCharacterTextSplitter(
     chunk_size=500,
     chunk_overlap=50,
@@ -21,7 +13,6 @@ _general_splitter = RecursiveCharacterTextSplitter(
     length_function=len,
 )
 
-# 쿼리 키워드 → section_type 매핑
 SECTION_TYPE_HINTS = {
     "기술 스택": "technical",
     "아키텍처": "technical",
@@ -38,36 +29,29 @@ SECTION_TYPE_HINTS = {
 }
 
 def _detect_section_type(query: str) -> str | None:
-    """쿼리에서 section_type 힌트를 감지한다."""
     for keyword, section_type in SECTION_TYPE_HINTS.items():
         if keyword in query:
             return section_type
     return None
 
 async def rag_retrieve_node(state: AgentState) -> AgentState:
-    """질문과 관련된 문서 청크 검색"""
+    """하이브리드 검색으로 관련 문서 청크 검색"""
     try:
-        store = get_rag_store()
         query = state["query"]
 
-        # section_type 힌트 감지
-        section_type = _detect_section_type(query)
+        # 하이브리드 검색 실행
+        docs = await hybrid_search(query=query, collection_name=COLLECTION_RAG, k=5)
 
-        if section_type:
-            # 전체 검색 후 section_type 필터링
-            all_docs = store.similarity_search(query, k=20)
-            filtered = [
-                doc for doc in all_docs
-                if doc.metadata.get("section_type") == section_type
-            ]
-            # 필터 결과 없으면 전체 결과 사용
-            docs = filtered[:3] if filtered else all_docs[:3]
-            logger.info(f"RAG 섹션 필터: {section_type} → {len(filtered)}개 중 {len(docs)}개")
-        else:
-            docs = store.similarity_search(query, k=3)
-            logger.info(f"RAG 문서 {len(docs)}개 검색됨")
+        # section_type 필터링 (힌트 있을 때)
+        section_type = _detect_section_type(query)
+        if section_type and docs:
+            filtered = [d for d in docs if d.metadata.get("section_type") == section_type]
+            if filtered:
+                docs = filtered[:3]
+                logger.info(f"섹션 필터 적용: {section_type} → {len(docs)}개")
 
         rag_context = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
+        logger.info(f"RAG 하이브리드 검색 완료: {len(docs)}개")
         return {**state, "rag_context": rag_context}
 
     except Exception as e:
@@ -77,7 +61,6 @@ async def rag_retrieve_node(state: AgentState) -> AgentState:
 async def ingest_document(filename: str, content: str, metadata: dict = {}) -> int:
     """문서를 청킹해서 벡터 스토어에 저장"""
     try:
-        # 파일 확장자로 청킹 전략 결정
         if filename.endswith(".md"):
             splitter = RecursiveCharacterTextSplitter(
                 chunk_size=600,
