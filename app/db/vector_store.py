@@ -5,6 +5,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.config import settings
 from app.core.logger import get_logger
+import requests
+
+from sentence_transformers import CrossEncoder
+import asyncio
+
+_reranker_model = None
 
 logger = get_logger("vector_store")
 
@@ -136,3 +142,51 @@ async def _bm25_search(
     except Exception as e:
         logger.warning(f"BM25 검색 실패 → 빈 결과 반환: {e}")
         return []
+    
+def _get_reranker() -> CrossEncoder:
+    """CrossEncoder 모델을 싱글톤으로 로드한다."""
+    global _reranker_model
+    if _reranker_model is None:
+        logger.info(f"Re-ranker 모델 로딩: {settings.reranker_model}")
+        _reranker_model = CrossEncoder(
+            settings.reranker_model,
+            max_length=512,
+        )
+        logger.info("Re-ranker 모델 로딩 완료")
+    return _reranker_model
+
+async def rerank(query: str, docs: list[Document], top_k: int = 5) -> list[Document]:
+    """
+    CrossEncoder로 문서를 재순위화한다.
+    실패 시 원본 순서 반환.
+    """
+    if not docs:
+        return docs
+
+    try:
+        reranker = _get_reranker()
+
+        # CrossEncoder 입력: [(query, doc), ...]
+        pairs = [(query, doc.page_content) for doc in docs]
+
+        # CPU 블로킹 작업을 별도 스레드에서 실행
+        loop = asyncio.get_event_loop()
+        scores = await loop.run_in_executor(
+            None,
+            lambda: reranker.predict(pairs)
+        )
+
+        # 점수 기준 정렬
+        scored_docs = sorted(
+            zip(scores, docs),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+
+        reranked = [doc for _, doc in scored_docs[:top_k]]
+        logger.info(f"Re-ranking 완료: {len(docs)}개 → {len(reranked)}개")
+        return reranked
+
+    except Exception as e:
+        logger.warning(f"Re-ranking 실패 → 원본 순서 반환: {e}")
+        return docs[:top_k]

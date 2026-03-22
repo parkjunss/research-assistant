@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:14b"
     embedding_model: str = "bge-m3"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
 
     # Search
     duckduckgo_max_results: int = 5

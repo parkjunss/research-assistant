@@ -3,6 +3,7 @@ services:
     build: .
     volumes:
       - ./research_workspace:/tmp/research_workspace
+      - hf_cache:/root/.cache/huggingface
     ports:
       - "8000:8000"
     env_file:
@@ -52,3 +53,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  hf_cache:

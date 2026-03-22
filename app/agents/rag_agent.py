@@ -1,8 +1,8 @@
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.state import AgentState
-from app.db.vector_store import get_rag_store, hybrid_search, COLLECTION_RAG
 from app.core.logger import get_logger
+from app.db.vector_store import get_rag_store, hybrid_search, rerank, COLLECTION_RAG
 
 logger = get_logger("rag_agent")
 
@@ -35,28 +35,32 @@ def _detect_section_type(query: str) -> str | None:
     return None
 
 async def rag_retrieve_node(state: AgentState) -> AgentState:
-    """하이브리드 검색으로 관련 문서 청크 검색"""
+    """하이브리드 검색 + Re-ranking으로 관련 문서 청크 검색"""
     try:
         query = state["query"]
 
-        # 하이브리드 검색 실행
-        docs = await hybrid_search(query=query, collection_name=COLLECTION_RAG, k=5)
+        # 1. 하이브리드 검색 (상위 20개)
+        docs = await hybrid_search(query=query, collection_name=COLLECTION_RAG, k=20)
 
-        # section_type 필터링 (힌트 있을 때)
+        # 2. section_type 필터링
         section_type = _detect_section_type(query)
         if section_type and docs:
             filtered = [d for d in docs if d.metadata.get("section_type") == section_type]
             if filtered:
-                docs = filtered[:3]
+                docs = filtered
                 logger.info(f"섹션 필터 적용: {section_type} → {len(docs)}개")
 
+        # 3. Re-ranking (상위 5개로 압축)
+        docs = await rerank(query=query, docs=docs, top_k=5)
+
         rag_context = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
-        logger.info(f"RAG 하이브리드 검색 완료: {len(docs)}개")
+        logger.info(f"RAG 최종 {len(docs)}개 반환")
         return {**state, "rag_context": rag_context}
 
     except Exception as e:
         logger.error(f"RAG 검색 실패: {e}")
         return {**state, "rag_context": ""}
+    
 
 async def ingest_document(filename: str, content: str, metadata: dict = {}) -> int:
     """문서를 청킹해서 벡터 스토어에 저장"""
@@ -92,3 +96,4 @@ async def ingest_document(filename: str, content: str, metadata: dict = {}) -> i
     except Exception as e:
         logger.error(f"문서 저장 실패: {e}")
         raise
+
