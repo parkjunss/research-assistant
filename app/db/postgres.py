@@ -73,8 +73,8 @@ _BUILTIN_AGENTS = [
     {"name": "summarize", "position": 20, "system_prompt": "검색 결과 map-reduce 요약"},
     {"name": "critic",    "position": 30, "system_prompt": "사실 검증 및 재검색 판단"},
     {"name": "format",    "position": 40, "system_prompt": "마크다운 응답 생성"},
+    {"name": "code",      "position": 50, "system_prompt": "코드 생성, 리뷰, 버그 분석"},
 ]
-
 
 # ── 기존 함수 ────────────────────────────────────────────────
 

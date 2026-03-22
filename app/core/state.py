@@ -11,5 +11,5 @@ class AgentState(TypedDict):
     final_answer: Optional[str]
     memory_context: Optional[str]
     rag_context: Optional[str]
+    is_coding: bool
     messages: Annotated[List[dict], operator.add]
-    plan_tasks: Optional[List[dict]]

@@ -1,20 +1,3 @@
-"""
-orchestrator.py
-
-고정 노드: memory_retrieve, rag_retrieve, memory_save (항상 포함, model_name 미관리)
-동적 노드: search, summarize, critic, format + 커스텀 에이전트 (DB에서 로드, model_name 주입)
-
-position 구조:
-    0   memory_retrieve  (고정)
-    5   rag_retrieve     (고정)
-    10  search           (내장 동적)
-    20  summarize        (내장 동적)
-    30  critic           (내장 동적)
-    40  format           (내장 동적)
-    11~89 커스텀 에이전트 (DB에서 로드, 내장 position 제외)
-    90  memory_save      (고정)
-"""
-
 import asyncio
 from langgraph.graph import StateGraph, END
 
@@ -26,6 +9,7 @@ from app.agents.formatter_agent import format_node, make_format_node
 from app.agents.memory_agent import memory_retrieve_node, memory_save_node
 from app.agents.rag_agent import rag_retrieve_node
 from app.agents.custom_agent import make_custom_node
+from app.agents.code_agent import code_node, is_coding_question
 from app.core.logger import get_logger
 
 logger = get_logger("orchestrator")
@@ -97,7 +81,6 @@ def _build_dynamic_sequence(agent_configs: list[dict]) -> list[tuple[str, callab
 
 
 async def build_graph_async():
-    """DB에서 에이전트 설정을 읽어 그래프를 빌드한다."""
     from app.db.postgres import get_all_agents
     agent_configs = await get_all_agents()
 
@@ -110,6 +93,7 @@ async def build_graph_async():
     graph.add_node("memory_retrieve", memory_retrieve_node)
     graph.add_node("rag_retrieve",    rag_retrieve_node)
     graph.add_node("memory_save",     memory_save_node)
+    graph.add_node("code",            code_node) 
 
     # ── 동적 노드 ──
     for name, fn in dynamic_nodes:
@@ -121,7 +105,21 @@ async def build_graph_async():
     graph.add_edge("memory_retrieve", "rag_retrieve")
 
     first = node_names[0] if node_names else "memory_save"
-    graph.add_edge("rag_retrieve", first)
+
+    # rag_retrieve 후 코딩 질문이면 code, 아니면 first로 분기
+    def route_by_query_type(state: AgentState) -> str:
+        if is_coding_question(state["query"]):
+            logger.info("코딩 질문 감지 → Code Agent 분기")
+            return "code"
+        return "search"
+
+    graph.add_conditional_edges("rag_retrieve", route_by_query_type, {
+        "code":   "code",
+        "search": first,
+    })
+
+    # code → memory_save 직행
+    graph.add_edge("code", "memory_save")
 
     for i, (name, _) in enumerate(dynamic_nodes):
         is_last = (i == len(dynamic_nodes) - 1)

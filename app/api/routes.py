@@ -90,6 +90,7 @@ async def query(request: QueryRequest):
             "final_answer": None,
             "memory_context": None,
             "rag_context": None,
+            "is_coding": False,
             "messages": [{"role": "user", "content": request.query}],
         }
 
