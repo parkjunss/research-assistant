@@ -28,6 +28,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.48",
     "tavily-python>=0.7.23",
     "uvicorn[standard]>=0.42.0",
+    "websockets>=16.0",
 ]
 
 [dependency-groups]
