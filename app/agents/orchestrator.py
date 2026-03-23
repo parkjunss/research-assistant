@@ -11,6 +11,7 @@ from app.agents.rag_agent import rag_retrieve_node
 from app.agents.custom_agent import make_custom_node
 from app.agents.code_agent import code_node, is_coding_question
 from app.agents.reasoning_agent import reasoning_node, route_after_reasoning
+from app.agents.chat_agent import chat_node
 from app.core.logger import get_logger
 
 logger = get_logger("orchestrator")
@@ -93,9 +94,10 @@ async def build_graph_async():
     # ── 고정 노드 ──
     graph.add_node("memory_retrieve", memory_retrieve_node)
     graph.add_node("rag_retrieve",    rag_retrieve_node)
-    graph.add_node("reasoning",       reasoning_node)   # 추가
+    graph.add_node("reasoning",       reasoning_node)
     graph.add_node("memory_save",     memory_save_node)
     graph.add_node("code",            code_node)
+    graph.add_node("chat", chat_node)
 
     # ── 동적 노드 ──
     for name, fn in dynamic_nodes:
@@ -111,13 +113,15 @@ async def build_graph_async():
 
     # reasoning 후 route_type에 따라 분기
     graph.add_conditional_edges("reasoning", route_after_reasoning, {
+        "chat":     "chat",  
         "code":     "code",
-        "planning": first,   # Planner Agent 추가 전까지 search로 폴백
-        "writing":  first,   # Writer Agent 추가 전까지 search로 폴백
+        "planning": first,
+        "writing":  first,
         "search":   first,
     })
 
     # code → memory_save 직행
+    graph.add_edge("chat", "memory_save") 
     graph.add_edge("code", "memory_save")
 
     for i, (name, _) in enumerate(dynamic_nodes):

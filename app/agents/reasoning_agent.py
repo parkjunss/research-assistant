@@ -1,4 +1,5 @@
 from langchain_core.messages import HumanMessage
+from langchain_core.messages import SystemMessage
 from app.core.state import AgentState
 from app.core.prompts import REASONING_PROMPT
 from app.core.utils import get_llm
@@ -7,10 +8,14 @@ from app.core.logger import get_logger
 
 logger = get_logger("reasoning_agent")
 
-VALID_TYPES = {"code", "planning", "writing", "search"}
+VALID_TYPES = {"chat", "code", "planning", "writing", "search"}
+
+CHAT_KEYWORDS = {
+    "안녕", "hi", "hello", "고마워", "감사", "잘 지내",
+    "반가워", "bye", "잘가", "수고", "お疲れ", "ありがとう",
+}
 
 async def reasoning_node(state: AgentState) -> AgentState:
-    """질문 유형을 LLM으로 판단하고 route_type을 설정한다."""
     query = state["query"]
 
     context_parts = []
@@ -40,14 +45,13 @@ async def reasoning_node(state: AgentState) -> AgentState:
 
 
 def _keyword_fallback(query: str) -> str:
-    """LLM 실패 시 키워드 기반 폴백."""
+    query_lower = query.lower().strip()
+    if any(keyword in query_lower for keyword in CHAT_KEYWORDS):
+        return "chat"
     if is_coding_question(query):
-        logger.info("키워드 폴백 → code")
         return "code"
-    logger.info("키워드 폴백 → search")
     return "search"
 
 
 def route_after_reasoning(state: AgentState) -> str:
-    """reasoning_node 결과로 다음 노드를 결정한다."""
     return state.get("route_type", "search")
