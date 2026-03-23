@@ -1,5 +1,7 @@
 # AI Research Assistant
 
+[![CI](https://github.com/parkjunss/research-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/parkjunss/research-assistant/actions/workflows/ci.yml)
+
 멀티 에이전트 아키텍처 기반의 AI 리서치 어시스턴트입니다.
 사용자 질문에 대해 자동으로 검색 → 요약 → 검증 → 응답 파이프라인을 실행하며,
 코딩, 문서 작성, 논문 분석, 작업 분해 등 다양한 작업을 지원합니다.
