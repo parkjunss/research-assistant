@@ -81,7 +81,6 @@ def _build_dynamic_sequence(agent_configs: list[dict]) -> list[tuple[str, callab
     sequence.sort(key=lambda x: x[0])
     return [(name, fn) for _, name, fn in sequence]
 
-
 async def build_graph_async():
     from app.db.postgres import get_all_agents
     agent_configs = await get_all_agents()
@@ -91,44 +90,44 @@ async def build_graph_async():
 
     graph = StateGraph(AgentState)
 
-    # ── 고정 노드 ──
+    # 1. 노드 등록 (동일)
     graph.add_node("memory_retrieve", memory_retrieve_node)
-    graph.add_node("rag_retrieve",    rag_retrieve_node)
-    graph.add_node("reasoning",       reasoning_node)
-    graph.add_node("memory_save",     memory_save_node)
-    graph.add_node("code",            code_node)
+    graph.add_node("rag_retrieve", rag_retrieve_node)
+    graph.add_node("reasoning", reasoning_node)
+    graph.add_node("memory_save", memory_save_node)
+    graph.add_node("code", code_node)
     graph.add_node("chat", chat_node)
 
-    # ── 동적 노드 ──
     for name, fn in dynamic_nodes:
         graph.add_node(name, fn)
-        logger.info(f"노드 등록: {name}")
 
-    # ── 엣지 연결 ──
+    # 2. 고정 엣지 연결
     graph.set_entry_point("memory_retrieve")
     graph.add_edge("memory_retrieve", "rag_retrieve")
-    graph.add_edge("rag_retrieve",    "reasoning")      # reasoning으로 변경
+    graph.add_edge("rag_retrieve", "reasoning")
 
+    # 3. 타겟 노드 이름 미리 정의
+    node_map = {name: name for name, _ in dynamic_nodes}
     first = node_names[0] if node_names else "memory_save"
+    search_node_name = node_map.get("search", first)
+    summarize_node_name = node_map.get("summarize", first)
 
-    # reasoning 후 route_type에 따라 분기
+    # [핵심] Reasoning 결과에 따른 지능형 분기
     graph.add_conditional_edges("reasoning", route_after_reasoning, {
-        "chat":     "chat",  
-        "code":     "code",
-        "planning": first,
-        "writing":  first,
-        "search":   first,
+        "chat": "chat",
+        "code": "code",
+        "search": search_node_name,    # 정보 부족 -> 검색부터
+        "planning": search_node_name, 
+        "writing": summarize_node_name # 정보 충분 -> 검색 건너뛰고 요약부터!
     })
 
-    # code → memory_save 직행
-    graph.add_edge("chat", "memory_save") 
-    graph.add_edge("code", "memory_save")
-
+    # 4. 동적 노드 간 엣지 순회 연결
     for i, (name, _) in enumerate(dynamic_nodes):
         is_last = (i == len(dynamic_nodes) - 1)
         next_name = dynamic_nodes[i + 1][0] if not is_last else "memory_save"
 
         if name == _CRITIC_NODE_NAME:
+            # critic 실패 시 돌아갈 곳 명시
             retry_target = "search" if "search" in node_names else first
             graph.add_conditional_edges(
                 _CRITIC_NODE_NAME,
@@ -138,6 +137,9 @@ async def build_graph_async():
         else:
             graph.add_edge(name, next_name)
 
+    # 5. 마무리 엣지
+    graph.add_edge("chat", "memory_save")
+    graph.add_edge("code", "memory_save")
     graph.add_edge("memory_save", END)
 
     compiled = graph.compile()

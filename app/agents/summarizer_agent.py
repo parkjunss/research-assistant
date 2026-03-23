@@ -20,21 +20,31 @@ def make_summarize_node(model_name: str | None = None):
 
 
 async def _run_summarize(state: AgentState, llm) -> AgentState:
-    search_results = state["search_results"]
+    # 1. 모든 소스를 수집
+    search_results = state.get("search_results", [])
     query = state["query"]
     memory_context = state.get("memory_context", "")
     rag_context = state.get("rag_context", "")
 
-    if not search_results:
-        logger.warning("검색 결과 없음 — 요약 스킵")
+    # [수정] 검색 결과는 없더라도 메모리나 RAG 컨텍스트가 있다면 진행!
+    if not search_results and not rag_context and not memory_context:
+        logger.warning("요약할 소스가 전혀 없음 (검색/RAG/메모리 모두 비어있음)")
         return {**state, "summaries": []}
 
-    logger.info(f"요약 시작: {len(search_results)}개 청크")
+    # 2. 요약 대상 리스트 생성
+    # 검색 결과가 있다면 그것들을 쓰고, 없다면 RAG 컨텍스트 자체를 하나의 청크로 취급
+    chunks_to_summarize = search_results if search_results else [rag_context or memory_context]
+    
+    logger.info(f"요약 시작: {len(chunks_to_summarize)}개 소스 활용")
 
-    async def summarize_chunk(chunk):
+    async def summarize_chunk(chunk_content):
         try:
+            # 텍스트가 너무 짧으면 요약할 필요 없음 (방어 로직)
+            if not chunk_content or len(str(chunk_content)) < 10:
+                return ""
+                
             prompt = SUMMARIZE_PROMPT.format(
-                search_results=chunk,
+                search_results=chunk_content, # 여기가 실제 요약 대상
                 query=query,
                 memory_context=memory_context or "없음",
                 rag_context=rag_context or "없음",
@@ -42,11 +52,12 @@ async def _run_summarize(state: AgentState, llm) -> AgentState:
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             return response.content
         except Exception as e:
-            logger.error(f"청크 요약 실패: {e}")
+            logger.error(f"요약 실패: {e}")
             return ""
 
+    # 3. 병렬 처리
     summaries = await asyncio.gather(
-        *[summarize_chunk(result) for result in search_results]
+        *[summarize_chunk(c) for c in chunks_to_summarize]
     )
     summaries = [s for s in summaries if s]
 

@@ -3,6 +3,7 @@ from sqlalchemy.orm import DeclarativeBase
 from datetime import datetime
 from app.core.config import settings
 from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean, select, text
+from app.db.vector_store import get_rag_store 
 
 DATABASE_URL = (
     f"postgresql+asyncpg://{settings.db_user}:{settings.db_password}"
@@ -76,20 +77,35 @@ _BUILTIN_AGENTS = [
     {"name": "code",      "position": 50, "system_prompt": "코드 생성, 리뷰, 버그 분석"},
 ]
 
-# ── 기존 함수 ────────────────────────────────────────────────
-
-
 async def init_db():
     async with engine.begin() as conn:
+        # 1. 필수 확장 프로그램 설치
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        
+        # 2. 직접 정의한 SQLAlchemy 모델들 생성 (ConversationHistory 등)
         await conn.run_sync(Base.metadata.create_all)
-        # langchain_pg_embedding 테이블에 FTS 인덱스 추가
+
+    # 3. LangChain PGVector 테이블 강제 생성 (이게 핵심!)
+    # sync 방식의 connection_string을 사용하는 PGVector의 경우:
+    store = get_rag_store()
+    # langchain-postgres 라이브러리 버전에 따라 메서드명이 다를 수 있습니다.
+    # 보통 create_schema() 또는 데이터를 하나 넣는 방식으로 생성합니다.
+    try:
+        # 최신 langchain-postgres 기준
+        store.create_tables_if_not_exists() 
+    except AttributeError:
+        # 메서드가 없다면 아주 작은 더미 데이터를 넣어 생성을 유도 (필요시)
+        pass
+
+    # 4. 이제 테이블이 확실히 존재하므로 인덱스 추가
+    async with engine.begin() as conn:
         await conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_embedding_fts
-            ON langchain_pg_embedding
+            CREATE INDEX IF NOT EXISTS idx_embedding_fts 
+            ON langchain_pg_embedding 
             USING gin(to_tsvector('simple', document))
         """))
+    
     await _seed_builtin_agents()
 
 

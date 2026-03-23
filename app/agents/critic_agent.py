@@ -32,7 +32,8 @@ async def _run_critic(state: AgentState, llm) -> AgentState:
     improved_query = None
     try:
         prompt = CRITIC_PROMPT.format(
-            search_results=state["search_results"],
+            # 검색 결과가 없으면 rag_context를 대조군으로 사용
+            search_results=state.get("search_results") or state.get("rag_context") or "참조 데이터 없음",
             summaries="\n".join(state["summaries"]),
         )
         response = await llm.ainvoke([HumanMessage(content=prompt)])

@@ -47,6 +47,32 @@ def get_rag_store() -> PGVector:
         use_jsonb=True,
     )
 
+async def hybrid_search_all_stores(
+    query: str, 
+    collections: list[str] = [COLLECTION_RAG, COLLECTION_MEMORY], 
+    k: int = 15
+) -> list[Document]:
+    """모든 컬렉션에서 검색 결과를 가져와 통합한다."""
+    all_docs = []
+    
+    for coll in collections:
+        # 각 컬렉션별로 하이브리드 검색 수행
+        docs = await hybrid_search(query=query, collection_name=coll, k=k)
+        # 출처를 메타데이터에 명시 (디버깅용)
+        for d in docs:
+            d.metadata["origin_collection"] = coll
+        all_docs.extend(docs)
+    
+    # 중복 제거 (내용 기준)
+    seen = set()
+    unique_docs = []
+    for d in all_docs:
+        if d.page_content not in seen:
+            unique_docs.append(d)
+            seen.add(d.page_content)
+            
+    return unique_docs
+
 async def hybrid_search(
     query: str,
     collection_name: str = COLLECTION_RAG,

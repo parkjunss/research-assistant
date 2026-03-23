@@ -2,7 +2,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.core.state import AgentState
 from app.core.logger import get_logger
-from app.db.vector_store import get_rag_store, hybrid_search, rerank, COLLECTION_RAG
+from app.db.vector_store import get_rag_store, hybrid_search_all_stores, rerank, COLLECTION_RAG, COLLECTION_MEMORY
 
 logger = get_logger("rag_agent")
 
@@ -38,23 +38,21 @@ async def rag_retrieve_node(state: AgentState) -> AgentState:
     """하이브리드 검색 + Re-ranking으로 관련 문서 청크 검색"""
     try:
         query = state["query"]
+        
+        # 1. 모든 저장소(RAG + Memory)에서 하이브리드 검색 수행
+        # 이제 COLLECTION_RAG가 비어있어도 COLLECTION_MEMORY에서 긁어옵니다.
+        docs = await hybrid_search_all_stores(
+            query=query, 
+            collections=[COLLECTION_RAG, COLLECTION_MEMORY], 
+            k=20
+        )
 
-        # 1. 하이브리드 검색 (상위 20개)
-        docs = await hybrid_search(query=query, collection_name=COLLECTION_RAG, k=20)
-
-        # 2. section_type 필터링
-        section_type = _detect_section_type(query)
-        if section_type and docs:
-            filtered = [d for d in docs if d.metadata.get("section_type") == section_type]
-            if filtered:
-                docs = filtered
-                logger.info(f"섹션 필터 적용: {section_type} → {len(docs)}개")
-
-        # 3. Re-ranking (상위 5개로 압축)
+        # 2. Re-ranking (여기서 지식과 메모리 중 가장 관련성 높은 5개만 남김)
         docs = await rerank(query=query, docs=docs, top_k=5)
 
-        rag_context = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
-        logger.info(f"RAG 최종 {len(docs)}개 반환")
+        rag_context = "\n\n".join([doc.page_content for doc in docs])
+        logger.info(f"통합 검색 완료: 최종 {len(docs)}개 반환")
+        
         return {**state, "rag_context": rag_context}
 
     except Exception as e:
