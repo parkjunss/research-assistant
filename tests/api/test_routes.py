@@ -1,5 +1,6 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
+from app.agents import orchestrator
 
 @pytest.mark.asyncio
 async def test_ping(async_client):
@@ -23,10 +24,14 @@ async def test_query_success(async_client):
         "should_retry": False,
         "retry_count": 0,
         "final_answer": "## 답변\nLangGraph는 에이전트 라이브러리입니다.",
+        "memory_context": None,
+        "rag_context": None,
+        "is_coding": False,
+        "route_type": "search",
         "messages": [{"role": "assistant", "content": "## 답변\nLangGraph는 에이전트 라이브러리입니다."}],
     }
 
-    with patch("app.api.routes.research_graph") as mock_graph, \
+    with patch.object(orchestrator, "research_graph") as mock_graph, \
          patch("app.api.routes.save_conversation", new_callable=AsyncMock):
         mock_graph.ainvoke = AsyncMock(return_value=mock_result)
         response = await async_client.post("/api/v1/query", json={
@@ -40,7 +45,7 @@ async def test_query_success(async_client):
 
 @pytest.mark.asyncio
 async def test_query_agent_failure(async_client):
-    with patch("app.api.routes.research_graph") as mock_graph:
+    with patch.object(orchestrator, "research_graph") as mock_graph:
         mock_graph.ainvoke = AsyncMock(side_effect=Exception("에이전트 오류"))
         response = await async_client.post("/api/v1/query", json={
             "query": "LangGraph란?",

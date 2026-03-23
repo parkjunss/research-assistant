@@ -5,9 +5,11 @@ from app.agents.formatter_agent import format_node
 @pytest.mark.asyncio
 async def test_format_node_success(state_with_summaries):
     mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(return_value=MagicMock(
-        content="## 답변\nLangGraph는 에이전트 라이브러리입니다."
-    ))
+    mock_response = MagicMock()
+    mock_response.content = "## 답변\nLangGraph는 에이전트 라이브러리입니다."
+    mock_response.tool_calls = []
+    mock_llm.bind_tools.return_value = mock_llm
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
 
     with patch("app.agents.formatter_agent.get_llm", return_value=mock_llm):
         result = await format_node(state_with_summaries)
@@ -19,6 +21,7 @@ async def test_format_node_success(state_with_summaries):
 @pytest.mark.asyncio
 async def test_format_node_llm_failure(state_with_summaries):
     mock_llm = MagicMock()
+    mock_llm.bind_tools.return_value = mock_llm
     mock_llm.ainvoke = AsyncMock(side_effect=Exception("LLM 오류"))
 
     with patch("app.agents.formatter_agent.get_llm", return_value=mock_llm):
