@@ -5,6 +5,7 @@ plan_parser_agent.py
 import json
 import re
 import io
+from datetime import datetime
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
@@ -12,8 +13,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core.utils import get_llm
 from app.core.prompts import CLASSIFY_PROMPT, PARSE_PROMPTS
-from app.db.vector_store import get_rag_store
+from app.db.vector_store import get_rag_store, deactivate_documents_by_filename
 from app.core.logger import get_logger
+from sqlalchemy import text
 
 logger = get_logger("plan_parser_agent")
 
@@ -53,48 +55,38 @@ _CHUNK_STRATEGIES = {
     },
 }
 
-
 async def parse_and_ingest_plan(
     filename: str,
     file_bytes: bytes,
     content_type: str,
     model_name: str | None = None,
 ) -> dict:
-    # 1. 텍스트 추출
-    text = _extract_text(filename, file_bytes)
-    if not text.strip():
-        raise ValueError("파일에서 텍스트를 추출할 수 없습니다.")
+    # 1. 텍스트 추출 (기존 코드)
+    text_content = _extract_text(filename, file_bytes)
+    
+    # 2. 문서 타입 분류 및 섹션 파싱 (기존 코드)
+    doc_type = await _classify_document(text_content[:_HEADER_LENGTH], model_name)
+    parsed = await _parse_sections(text_content[:4000], doc_type, model_name)
+    
+    # [추가] 3. 신규 저장 전 기존 데이터 비활성화
+    await deactivate_documents_by_filename(filename)
 
-    logger.info(f"텍스트 추출 완료: {filename} ({len(text)}자)")
-
-    # 2. 문서 타입 분류 (앞 500자만 사용 — 비용 절약)
-    doc_type = await _classify_document(text[:_HEADER_LENGTH], model_name)
-    logger.info(f"문서 타입 분류: {doc_type}")
-
-    # 3. 타입별 프롬프트로 섹션 파싱 (최대 4000자)
-    parsed = await _parse_sections(text[:4000], doc_type, model_name)
-    title = parsed.get("title", "")
+    # 4. Document 생성 시 is_active 메타데이터 주입
+    title = parsed.get("title", filename)
     sections = parsed.get("sections", [])
-
-    if not sections:
-        logger.warning("섹션 파싱 실패 — 전체 텍스트를 단일 청크로 저장")
-        sections = [{"type": "other", "heading": filename, "content": text}]
-
-    logger.info(f"섹션 파싱 완료: {len(sections)}개 / 제목: {title or '(없음)'}")
-
-    # 4. Document 생성 + RAG 저장
+    
+    # _build_documents 함수를 수정하거나, 생성된 docs의 metadata를 직접 수정
     docs = _build_documents(filename, title, doc_type, sections)
+    
+    for doc in docs:
+        doc.metadata["is_active"] = True  # 새 데이터는 활성 상태
+        doc.metadata["version"] = datetime.utcnow().isoformat() # 버전 기록
+
+    # 5. RAG 저장
     store = get_rag_store()
     store.add_documents(docs)
 
-    logger.info(f"RAG 저장 완료: {filename} → {len(docs)}개 청크")
-    return {
-        "title": title,
-        "doc_type": doc_type,
-        "sections": len(sections),
-        "chunks": len(docs),
-    }
-
+    return { "title": title, "doc_type": doc_type, "sections": len(sections), "chunks": len(docs) }
 
 # ── 문서 타입 분류 ────────────────────────────────────────────
 

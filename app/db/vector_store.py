@@ -77,6 +77,7 @@ async def hybrid_search(
     query: str,
     collection_name: str = COLLECTION_RAG,
     k: int = 5,
+    filter: dict = None,  # 필터 추가
     vector_weight: float = 0.7,
     bm25_weight: float = 0.3,
 ) -> list[Document]:
@@ -87,11 +88,11 @@ async def hybrid_search(
     store = get_rag_store() if collection_name == COLLECTION_RAG else get_memory_store()
 
     # 1. 벡터 검색 (상위 20개)
-    vector_docs = store.similarity_search(query, k=20)
+    vector_docs = store.similarity_search(query, k=20, filter=filter)
     vector_ranks = {doc.page_content: i + 1 for i, doc in enumerate(vector_docs)}
 
     # 2. BM25 키워드 검색 (PostgreSQL FTS)
-    bm25_docs = await _bm25_search(query, collection_name, limit=20)
+    bm25_docs = await _bm25_search(query, collection_name, limit=20, filter=filter)
     bm25_ranks = {doc.page_content: i + 1 for i, doc in enumerate(bm25_docs)}
 
     # 3. RRF 점수 계산
@@ -125,31 +126,35 @@ async def _bm25_search(
     query: str,
     collection_name: str,
     limit: int = 20,
+    filter: dict = None  # [필터 추가]
 ) -> list[Document]:
-    """PostgreSQL FTS로 BM25 키워드 검색을 수행한다."""
     try:
+        # 필터 조건 동적 생성
+        filter_clause = ""
+        params = {"query": query, "collection_name": collection_name, "limit": limit}
+        
+        if filter:
+            # metadata->>'key' = 'value' 형태의 조건을 동적으로 추가
+            for key, value in filter.items():
+                filter_clause += f" AND e.cmetadata->>'{key}' = :{key}"
+                params[key] = str(value)
+
         async with async_engine.connect() as conn:
             result = await conn.execute(
-                text("""
-                    SELECT
-                        e.document,
+                text(f"""
+                    SELECT 
+                        e.document, 
                         e.cmetadata,
-                        ts_rank(
-                            to_tsvector('simple', e.document),
-                            plainto_tsquery('simple', :query)
-                        ) AS rank
+                        ts_rank(to_tsvector('simple', e.document), plainto_tsquery('simple', :query)) AS rank
                     FROM langchain_pg_embedding e
                     JOIN langchain_pg_collection c ON e.collection_id = c.uuid
                     WHERE c.name = :collection_name
                       AND to_tsvector('simple', e.document) @@ plainto_tsquery('simple', :query)
+                      {filter_clause}  -- [필터 조건 삽입]
                     ORDER BY rank DESC
                     LIMIT :limit
                 """),
-                {
-                    "query": query,
-                    "collection_name": collection_name,
-                    "limit": limit,
-                }
+                params
             )
             rows = result.fetchall()
 
@@ -219,3 +224,17 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+# DB와 직접 소통하는 로직은 여기서만 관리
+async def deactivate_documents_by_filename(filename: str):
+    async with async_engine.begin() as conn:
+        await conn.execute(
+            text("""
+                UPDATE langchain_pg_embedding 
+                SET cmetadata = cmetadata || '{"is_active": false}'::jsonb 
+                WHERE cmetadata->>'filename' = :filename
+                  AND (cmetadata->>'is_active')::boolean = true
+            """),
+            {"filename": filename}
+        )

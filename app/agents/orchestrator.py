@@ -29,11 +29,32 @@ _BUILTIN_FACTORIES = {
 
 def should_retry(state: AgentState) -> str:
     retry_count = state.get("retry_count", 0)
-    should = state.get("should_retry", False)
-    logger.info(f"재시도 판단 — should_retry: {should} / retry_count: {retry_count}")
-    if should and retry_count < 2:
-        return "search"
-    return "format"
+    # Critic이 남긴 상세 이유(reason) 가져오기
+    critique_reason = state.get("critique", {}).get("reason", "")
+    next_query = state.get("next_query", "")
+
+    # 1. 쿼리 자체가 오염된 경우 (LLM의 메타 발언 포함)
+    if "**" in next_query or "provide it and I'll assist" in next_query:
+        logger.warning("잘못된 재검색 쿼리 감지 — 강제 종료")
+        return "format"
+
+    # 2. [critique 활용] 정보 충돌이 발생했다고 판단한 경우
+    # 우리가 이전에 Critic Prompt에 넣은 "정보 충돌" 키워드를 감지
+    if "정보 충돌" in critique_reason or "Conflict" in critique_reason:
+        logger.warning(f"정보 충돌 감지({critique_reason}) — 추가 검색 없이 현재 최선책으로 답변")
+        return "format"
+
+    # 3. [critique 활용] 이미 충분한 정보가 있는데 Critic이 고집부리는 경우
+    if "이미 충분" in critique_reason or "충분한 정보" in critique_reason:
+        return "format"
+
+    # 4. 재시도 횟수 제한 (지옥 방지)
+    if retry_count >= 2: 
+        logger.info("최대 재시도 횟수 도달 — 답변 생성 단계로 이동")
+        return "format"
+    
+    # 5. 일반적인 리트라이 판정
+    return "search" if state.get("should_retry") else "format"
 
 
 def _build_dynamic_sequence(agent_configs: list[dict]) -> list[tuple[str, callable]]:
@@ -117,7 +138,7 @@ async def build_graph_async():
         "chat": "chat",
         "code": "code",
         "search": search_node_name,    # 정보 부족 -> 검색부터
-        "planning": search_node_name, 
+        "planning": summarize_node_name, 
         "writing": summarize_node_name # 정보 충분 -> 검색 건너뛰고 요약부터!
     })
 

@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage
 
 from app.core.utils import get_llm
 from app.core.prompts import PLANNER_PROMPT
-from app.db.vector_store import get_rag_store, get_memory_store
+from app.db.vector_store import get_rag_store, hybrid_search, COLLECTION_RAG
 from app.core.logger import get_logger
 
 logger = get_logger("planner_agent")
@@ -78,22 +78,33 @@ async def run_planner(
 # ── 컨텍스트 수집 ─────────────────────────────────────────────
 
 async def _gather_context(query: str) -> str:
-    """RAG(기획서 등)와 메모리에서 관련 컨텍스트를 가져온다."""
+    """RAG(기획서 등)와 메모리에서 활성화된 최신 컨텍스트만 가져온다."""
     parts = []
 
     try:
-        rag_store = get_rag_store()
-        rag_docs = rag_store.similarity_search(query, k=5)
+        # [수정] 단순 similarity_search 대신 필터가 적용된 hybrid_search 사용
+        # is_active=True 필터를 통해 구버전 데이터는 검색 결과에서 원천 차단됩니다.
+        rag_docs = await hybrid_search(
+            query=query,
+            collection_name=COLLECTION_RAG,
+            k=5,
+            filter={"is_active": True}  # 핵심: 활성 데이터만 필터링
+        )
+        
         if rag_docs:
             rag_text = "\n\n".join([
                 f"[{doc.metadata.get('section_type', 'doc')}] {doc.page_content}"
                 for doc in rag_docs
             ])
-            parts.append(f"=== 기획서 / 문서 컨텍스트 ===\n{rag_text}")
+            parts.append(f"=== 기획서 / 문서 컨텍스트 (최신본) ===\n{rag_text}")
+            
     except Exception as e:
         logger.warning(f"RAG 컨텍스트 수집 실패: {e}")
 
+    # 메모리 스토어 검색 (메모리는 통상 최신 대화가 중요하므로 필터 생략 가능 혹은 세션ID 활용)
     try:
+        # 메모리 검색 로직 (기존 유지 혹은 필요시 필터 추가)
+        from app.db.vector_store import get_memory_store
         mem_store = get_memory_store()
         mem_docs = mem_store.similarity_search(query, k=3)
         if mem_docs:
