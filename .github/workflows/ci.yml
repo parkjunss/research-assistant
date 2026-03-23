@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: research_db
+          POSTGRES_USER: dev
+          POSTGRES_PASSWORD: dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      GEMINI_API_KEY: "dummy-key-for-ci"
+      GEMINI_MODEL: gemini-3.1-flash-lite-preview
+      OLLAMA_BASE_URL: http://localhost:11434
+      OLLAMA_MODEL: qwen2.5:14b
+      EMBEDDING_MODEL: bge-m3
+      RERANKER_MODEL: bge-m3
+      DUCKDUCKGO_MAX_RESULTS: 5
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: research_db
+      DB_USER: dev
+      DB_PASSWORD: dev
+      APP_ENV: test
+      APP_PORT: 8000
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: test@gmail.com
+      SMTP_PASSWORD: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv 설치
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Python 3.11 설정
+        run: uv python install 3.11
+
+      - name: 의존성 설치
+        run: uv sync --frozen
+
+      - name: pgvector 확장 활성화
+        run: |
+          PGPASSWORD=dev psql -h localhost -U dev -d research_db \
+            -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: pytest 실행
+        run: uv run pytest -v --tb=short
